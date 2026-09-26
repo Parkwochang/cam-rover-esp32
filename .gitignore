@@ -1,0 +1,5 @@
+/target/
+/sdkconfig
+/components_*.lock
+/.embuild/
+.DS_Store

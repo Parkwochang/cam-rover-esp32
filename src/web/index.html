@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+  <title>Cam Rover</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    * { box-sizing: border-box; touch-action: manipulation; }
+    body { margin: 0; padding: 16px; background: #101319; color: #f5f7fb; text-align: center; }
+    main { width: min(680px, 100%); margin: auto; }
+    h1 { margin: 4px 0 12px; font-size: 1.45rem; }
+    #stream { display: block; width: 100%; min-height: 180px; object-fit: contain; background: #050608; border-radius: 14px; }
+    .pad { display: grid; grid-template-columns: repeat(3, 76px); gap: 9px; justify-content: center; margin: 18px 0; user-select: none; }
+    button { min-height: 68px; border: 0; border-radius: 16px; background: #2c3648; color: white; font-size: 1.7rem; box-shadow: 0 4px 0 #151a23; }
+    button:active, button.active { transform: translateY(3px); box-shadow: 0 1px 0 #151a23; background: #4274c7; }
+    .diagonal { background: #34445e; }
+    .stop { background: #9e3943; }
+    .toolbar { display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap; }
+    label { display: flex; gap: 8px; align-items: center; }
+    input[type=range] { width: 190px; }
+    #light { min-height: 44px; padding: 0 18px; font-size: 1rem; }
+    small { display: block; margin-top: 14px; color: #9ca8bb; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Cam Rover</h1>
+  <img id="stream" alt="로버 카메라 영상">
+  <div class="pad" aria-label="8방향 주행 버튼">
+    <button class="diagonal" data-move="forward-left">↖</button>
+    <button data-move="forward">↑</button>
+    <button class="diagonal" data-move="forward-right">↗</button>
+    <button data-move="left">←</button>
+    <button class="stop" data-move="stop">●</button>
+    <button data-move="right">→</button>
+    <button class="diagonal" data-move="backward-left">↙</button>
+    <button data-move="backward">↓</button>
+    <button class="diagonal" data-move="backward-right">↘</button>
+  </div>
+  <div class="toolbar">
+    <label>속도 <input id="speed" type="range" min="85" max="255" step="5" value="170"><output id="speedValue">170</output></label>
+    <button id="light">라이트 끔</button>
+  </div>
+  <small>버튼을 누르는 동안만 움직이며 손을 떼면 즉시 정지합니다. 키보드 방향키/WASD와 Q/E/Z/C 대각선 키도 지원합니다.</small>
+</main>
+<script>
+  const send = (path) => fetch(path, {cache: 'no-store'}).catch(() => {});
+  const move = (direction) => send(`/api/move?direction=${direction}`);
+  let activeMotion = 'stop';
+  const setMotion = (direction) => { activeMotion = direction; move(direction); };
+  setInterval(() => { if (activeMotion !== 'stop') move(activeMotion); }, 300);
+  document.getElementById('stream').src = `http://${location.hostname}:81/stream`;
+
+  document.querySelectorAll('[data-move]').forEach((button) => {
+    const direction = button.dataset.move;
+    const start = (event) => {
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+      button.classList.add('active');
+      setMotion(direction);
+    };
+    const stop = (event) => {
+      event.preventDefault();
+      button.classList.remove('active');
+      if (direction !== 'stop') setMotion('stop');
+    };
+    button.addEventListener('pointerdown', start);
+    button.addEventListener('pointerup', stop);
+    button.addEventListener('pointercancel', stop);
+    button.addEventListener('contextmenu', (event) => event.preventDefault());
+  });
+
+  const speed = document.getElementById('speed');
+  const speedValue = document.getElementById('speedValue');
+  speed.addEventListener('input', () => speedValue.value = speed.value);
+  speed.addEventListener('change', () => send(`/api/speed?value=${speed.value}`));
+
+  let lightOn = false;
+  const light = document.getElementById('light');
+  light.addEventListener('click', () => {
+    lightOn = !lightOn;
+    light.textContent = lightOn ? '라이트 켬' : '라이트 끔';
+    light.classList.toggle('active', lightOn);
+    send(`/api/light?on=${lightOn ? 1 : 0}`);
+  });
+
+  const keys = {ArrowUp:'forward', w:'forward', ArrowDown:'backward', s:'backward', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right', q:'forward-left', e:'forward-right', z:'backward-left', c:'backward-right'};
+  const pressed = new Set();
+  addEventListener('keydown', (event) => {
+    const direction = keys[event.key];
+    if (direction && !pressed.has(event.key)) { event.preventDefault(); pressed.add(event.key); setMotion(direction); }
+  });
+  addEventListener('keyup', (event) => {
+    if (keys[event.key]) { event.preventDefault(); pressed.delete(event.key); setMotion('stop'); }
+  });
+  addEventListener('blur', () => setMotion('stop'));
+</script>
+</body>
+</html>

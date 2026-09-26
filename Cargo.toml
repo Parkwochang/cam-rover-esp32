@@ -1,0 +1,31 @@
+[package]
+name = "cam-rover-esp32"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+
+[dependencies]
+anyhow = "1"
+embedded-svc = "0.29"
+esp-idf-svc = "0.52.1"
+log = "0.4"
+
+[build-dependencies]
+embuild = "0.33.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[package.metadata.esp-idf-sys]
+esp_idf_version = "v5.4.3"
+esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
+
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp32-camera", version = "2.1.7" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/rover_hardware"]
+bindings_header = "components/rover_hardware/include/rover_hardware.h"
+bindings_module = "rover"
