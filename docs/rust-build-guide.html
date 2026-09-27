@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Cam Rover · Rust 빌드와 실행 안내</title>
+  <style>
+    :root {
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: light;
+      --bg: #f5f7fb; --surface: #fff; --ink: #182235; --muted: #5b6880;
+      --line: #dce3ef; --accent: #2757d6; --accent-soft: #e9efff;
+      --green: #177357; --green-soft: #e4f5ee; --code: #142036; --code-ink: #e8f0ff;
+      --shadow: 0 14px 44px rgba(31, 51, 89, .07);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color-scheme: dark;
+        --bg: #0f1521; --surface: #172131; --ink: #e9eef9; --muted: #a9b6cc;
+        --line: #324057; --accent: #8aaaff; --accent-soft: #263a62;
+        --green: #76d3ac; --green-soft: #1c4037; --code: #0b111d; --code-ink: #e8f0ff;
+        --shadow: 0 14px 44px rgba(0, 0, 0, .2);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--bg); color: var(--ink); line-height: 1.65; }
+    a { color: var(--accent); text-underline-offset: .18em; }
+    button { font: inherit; }
+    .wrap { width: min(1080px, calc(100% - 36px)); margin: 0 auto; }
+    .top { border-bottom: 1px solid var(--line); background: var(--surface); }
+    .top .wrap { display: flex; flex-wrap: wrap; gap: 12px 26px; align-items: center; justify-content: space-between; padding: 14px 0; }
+    .brand { font-weight: 750; letter-spacing: -.02em; }
+    .top nav { display: flex; flex-wrap: wrap; gap: 7px 19px; font-size: .92rem; }
+    .top nav a { color: var(--muted); text-decoration: none; }
+    .top nav a:hover { color: var(--accent); }
+    main { padding-bottom: 70px; }
+    .hero { padding: 52px 0 28px; }
+    .eyebrow { margin: 0 0 8px; font-size: .81rem; font-weight: 750; letter-spacing: .09em; text-transform: uppercase; color: var(--accent); }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 14px; font-size: clamp(2.1rem, 5vw, 3.4rem); line-height: 1.18; letter-spacing: -.045em; }
+    h2 { margin-bottom: 14px; font-size: clamp(1.45rem, 3vw, 2rem); letter-spacing: -.025em; line-height: 1.25; }
+    h3 { font-size: 1.12rem; line-height: 1.3; }
+    .lead { max-width: 720px; color: var(--muted); font-size: 1.13rem; }
+    .hero-answers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+    .answer { padding: 10px 15px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); font-size: .95rem; }
+    .answer strong { color: var(--green); }
+    section { padding-top: 42px; scroll-margin-top: 20px; }
+    .section-intro { max-width: 780px; color: var(--muted); }
+    .panel { border: 1px solid var(--line); background: var(--surface); border-radius: 18px; box-shadow: var(--shadow); }
+    .pipeline { padding: 22px; overflow: hidden; }
+    .pipeline-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+    .pipeline-head p { margin: 0; color: var(--muted); }
+    .actions { display: flex; gap: 8px; }
+    .action { border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 7px 12px; border-radius: 9px; cursor: pointer; }
+    .action:hover { border-color: var(--accent); }
+    .action.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+    .flow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+    .flow-step { position: relative; min-width: 0; border: 1px solid var(--line); border-radius: 13px; background: var(--bg); padding: 14px 10px; color: var(--ink); text-align: left; cursor: pointer; transition: transform .22s ease, background .22s ease, border-color .22s ease; }
+    .flow-step:hover { transform: translateY(-2px); }
+    .flow-step[aria-current="step"] { border-color: var(--accent); background: var(--accent-soft); transform: translateY(-3px); }
+    .flow-step .num { display: block; color: var(--accent); font-weight: 750; font-size: .78rem; }
+    .flow-step .name { display: block; font-weight: 750; line-height: 1.25; margin: 5px 0 2px; }
+    .flow-step .mini { display: block; color: var(--muted); font-size: .78rem; line-height: 1.35; overflow-wrap: anywhere; }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; right: -11px; top: 40%; z-index: 2; color: var(--accent); font-weight: 800; background: var(--surface); border-radius: 50%; width: 16px; text-align: center; }
+    .detail { min-height: 126px; padding: 20px; margin-top: 14px; background: var(--accent-soft); border-radius: 13px; }
+    .detail strong { display: block; font-size: 1.05rem; }
+    .detail p { margin: 6px 0 0; color: var(--muted); }
+    .detail code { overflow-wrap: anywhere; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { padding: 21px; }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .card p { color: var(--muted); }
+    .tag { display: inline-block; padding: 3px 8px; background: var(--accent-soft); color: var(--accent); border-radius: 7px; font-size: .77rem; font-weight: 750; }
+    .tag.green { background: var(--green-soft); color: var(--green); }
+    .file-list { display: grid; grid-template-columns: minmax(145px, 230px) 1fr; row-gap: 0; margin: 0; }
+    .file-list dt, .file-list dd { border-top: 1px solid var(--line); padding: 12px 0; margin: 0; }
+    .file-list dt { font-weight: 700; padding-right: 12px; }
+    .file-list dd { color: var(--muted); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    code { font-size: .88em; }
+    pre { background: var(--code); color: var(--code-ink); border-radius: 12px; padding: 17px; overflow-x: auto; line-height: 1.55; font-size: .84rem; }
+    pre code { font-size: inherit; }
+    .sequence { counter-reset: seq; padding: 0; margin: 0; list-style: none; }
+    .sequence li { position: relative; padding: 0 0 20px 38px; border-left: 2px solid var(--line); margin-left: 13px; }
+    .sequence li:last-child { border-left-color: transparent; padding-bottom: 0; }
+    .sequence li::before { counter-increment: seq; content: counter(seq); position: absolute; left: -14px; top: 0; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--bg); font-size: .8rem; font-weight: 750; }
+    .sequence h3 { margin: 0 0 5px; }
+    .sequence p { margin-bottom: 9px; color: var(--muted); }
+    .note { padding: 14px 17px; border-left: 4px solid var(--accent); background: var(--accent-soft); border-radius: 0 10px 10px 0; }
+    .note p { margin: 0; }
+    .runtime { display: grid; grid-template-columns: 1fr 28px 1fr 28px 1fr 28px 1fr; gap: 9px; align-items: stretch; }
+    .runtime > div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .runtime strong, .runtime span { display: block; }
+    .runtime span { color: var(--muted); font-size: .88rem; margin-top: 5px; }
+    .runtime .arrow { border: 0; background: transparent; align-content: center; text-align: center; color: var(--accent); font-weight: 800; padding: 0; }
+    details { border-top: 1px solid var(--line); padding: 14px 0; }
+    details:first-child { border-top: 0; }
+    summary { cursor: pointer; font-weight: 700; }
+    details p { color: var(--muted); margin: 9px 0 0; }
+    footer { color: var(--muted); padding: 25px 0 40px; border-top: 1px solid var(--line); font-size: .9rem; }
+    @media (max-width: 800px) {
+      .flow { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .flow-step:nth-child(3)::after { display: none; }
+      .runtime { grid-template-columns: 1fr; }
+      .runtime .arrow { transform: rotate(90deg); }
+    }
+    @media (max-width: 590px) {
+      .hero { padding-top: 34px; }
+      .two-col { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow-step:nth-child(3)::after { display: block; }
+      .flow-step:nth-child(even)::after { display: none; }
+      .file-list { grid-template-columns: 1fr; }
+      .file-list dt { padding-bottom: 0; }
+      .file-list dd { border-top: 0; padding-top: 2px; }
+      .runtime .arrow { padding: 3px 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .flow-step { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <div class="brand">CAM ROVER <span aria-hidden="true">/</span> 개발 안내</div>
+      <nav aria-label="문서 목차">
+        <a href="#flow">전체 흐름</a><a href="#folders">폴더</a><a href="#tools">설치 도구</a><a href="#commands">CLI 명령</a><a href="#runtime">보드 실행</a>
+      </nav>
+    </div>
+  </header>
+  <main class="wrap">
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">Rust on ESP32-CAM</p>
+      <h1 id="page-title">소스에서 로봇까지,<br>무엇이 어디서 실행될까?</h1>
+      <p class="lead">이 프로젝트는 Mac에서 Rust와 ESP-IDF로 펌웨어를 빌드하고, 결과를 ESP32-CAM에 기록합니다. 로봇을 움직이는 프로그램은 Mac의 Node.js가 아니라 ESP32 칩에서 실행됩니다.</p>
+      <div class="hero-answers" aria-label="핵심 답변">
+        <div class="answer"><strong>.embuild</strong> = ESP-IDF 빌드 도구와 SDK</div>
+        <div class="answer"><strong>target</strong> = 컴파일된 펌웨어</div>
+        <div class="answer"><strong>Node.js</strong> = 빌드에 불필요</div>
+      </div>
+    </section>
+
+    <section id="flow" aria-labelledby="flow-title">
+      <h2 id="flow-title">빌드와 실행 흐름</h2>
+      <p class="section-intro">단계를 누르거나 재생을 누르면 각 도구가 무엇을 만드는지 볼 수 있습니다. 화살표는 파일과 실행 위치가 이동하는 방향입니다.</p>
+      <div class="pipeline panel">
+        <div class="pipeline-head"><p>Mac에서 작성 → USB로 기록 → ESP32에서 실행</p><div class="actions"><button class="action primary" id="play-flow" type="button" aria-label="흐름 애니메이션 재생">▶ 재생</button><button class="action" id="next-flow" type="button">다음 단계</button></div></div>
+        <div class="flow" role="group" aria-label="펌웨어 생성 과정">
+          <button class="flow-step" type="button" data-step="0" aria-current="step"><span class="num">01 · Mac</span><span class="name">소스</span><span class="mini">.rs · .c · .h · 설정</span></button>
+          <button class="flow-step" type="button" data-step="1"><span class="num">02 · Mac</span><span class="name">Cargo</span><span class="mini">의존성·타깃 결정</span></button>
+          <button class="flow-step" type="button" data-step="2"><span class="num">03 · Mac</span><span class="name">ESP-IDF</span><span class="mini">SDK·카메라 드라이버</span></button>
+          <button class="flow-step" type="button" data-step="3"><span class="num">04 · Mac</span><span class="name">ELF</span><span class="mini">target/release 결과</span></button>
+          <button class="flow-step" type="button" data-step="4"><span class="num">05 · USB</span><span class="name">espflash</span><span class="mini">ESP32 플래시에 기록</span></button>
+          <button class="flow-step" type="button" data-step="5"><span class="num">06 · 로봇</span><span class="name">실행</span><span class="mini">Wi-Fi · 영상 · 모터</span></button>
+        </div>
+        <div id="flow-detail" class="detail" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section id="folders" aria-labelledby="folders-title">
+      <h2 id="folders-title">폴더와 파일의 역할</h2>
+      <div class="two-col">
+        <div class="card panel"><span class="tag green">사람이 수정</span><h3>소스와 설정</h3>
+          <dl class="file-list">
+            <dt><a href="../src/main.rs"><code>src/*.rs</code></a></dt><dd>Wi-Fi, 웹 서버, 안전 정지, 방향 계산 등 Rust 앱 로직.</dd>
+            <dt><a href="../components/rover_hardware/rover_hardware.c"><code>components/*.c</code></a></dt><dd>카메라 초기화와 모터 PWM을 ESP-IDF API로 연결.</dd>
+            <dt><a href="../components/rover_hardware/include/rover_hardware.h"><code>*.h</code></a></dt><dd>C 함수 선언. Rust 바인딩을 만드는 입력이기도 함.</dd>
+            <dt><a href="../components/rover_hardware/CMakeLists.txt"><code>CMakeLists.txt</code></a></dt><dd>C 소스와 ESP-IDF 부품 의존성을 지정하는 빌드 설정 파일.</dd>
+            <dt><a href="../src/web/index.html"><code>src/web/index.html</code></a></dt><dd>휴대폰 조종 화면. 빌드할 때 펌웨어에 포함.</dd>
+          </dl>
+        </div>
+        <div class="card panel"><span class="tag">빌드에 사용</span><h3>설정과 빌드 결과</h3>
+          <dl class="file-list">
+            <dt><a href="../Cargo.toml"><code>Cargo.toml</code></a></dt><dd>Rust 패키지, 의존성, ESP-IDF 5.4.3과 카메라 컴포넌트 지정.</dd>
+            <dt><a href="../.cargo/config.toml"><code>.cargo/</code></a></dt><dd>이 저장소의 타깃, 링커, 실행 명령 설정. 사용자 홈의 <code>~/.cargo/</code> 설치 폴더와는 다름.</dd>
+            <dt><code>.embuild/</code></dt><dd>첫 빌드 때 내려받은 ESP-IDF, C 컴파일러, Python 환경 등의 내부 작업 폴더. 펌웨어 파일이 아님.</dd>
+            <dt><code>target/</code></dt><dd>Cargo 빌드 산출물. <code>target/xtensa-esp32-espidf/release/cam-rover-esp32</code>가 업로드할 ELF.</dd>
+            <dt><code>*.bin</code></dt><dd><code>espflash save-image --merge</code>로 별도 생성한 통합 플래시 이미지. 일반 <code>espflash flash</code>에는 ELF를 사용해도 됨.</dd>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section id="tools" aria-labelledby="tools-title">
+      <h2 id="tools-title">설치해야 할 도구</h2>
+      <p class="section-intro">로봇 펌웨어 빌드 기준입니다. 이 Mac에는 아래 Rust/ESP 도구가 이미 설치되어 있습니다. 새 Mac에서 저장소를 내려받았다면 한 번 설치해야 합니다.</p>
+      <div class="two-col">
+        <div class="card panel"><h3>필수</h3><ul>
+          <li><strong>Apple Command Line Tools</strong> — C 컴파일에 필요한 기본 개발 도구.</li>
+          <li><strong>rustup · Cargo</strong> — Rust 툴체인과 패키지 빌드 명령.</li>
+          <li><strong>espup</strong> — ESP32의 Xtensa 전용 Rust 컴파일러 설치.</li>
+          <li><strong>ldproxy</strong> — Rust와 ESP-IDF C 라이브러리의 최종 링크.</li>
+          <li><strong>espflash</strong> — USB 직렬 포트를 통해 ESP32에 기록.</li>
+        </ul></div>
+        <div class="card panel"><h3>직접 설치할 필요 없음</h3><ul>
+          <li><strong>Node.js / npm</strong> — 현재 펌웨어와 내장 웹 화면은 번들러 없이 빌드됩니다.</li>
+          <li><strong>Arduino IDE</strong> — 이 프로젝트는 Cargo와 ESP-IDF를 사용합니다.</li>
+          <li><strong>ESP-IDF SDK · Python 가상환경 · C 도구</strong> — 첫 빌드 때 <code>.embuild/</code> 아래로 자동 준비됩니다.</li>
+          <li><strong>CH340 드라이버</strong> — USB 직렬 포트가 나타나지 않을 때만 확인합니다.</li>
+        </ul></div>
+      </div>
+    </section>
+
+    <section id="commands" aria-labelledby="commands-title">
+      <h2 id="commands-title">Mac 터미널에서 실행하는 순서</h2>
+      <ol class="sequence">
+        <li><h3>새 Mac에서 도구 설치 · 최초 1회</h3><p>저장소의 <code>rust-toolchain.toml</code>이 <code>esp</code>를 지정하므로, 설치 명령에는 <code>+stable</code>을 붙이면 새 환경에서도 순서가 꼬이지 않습니다. Apple 개발 도구는 없을 때만 설치하세요.</p>
+          <pre><code>xcode-select --install  # 이미 설치돼 있으면 생략
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+cargo +stable install espup --locked
+espup install
+cargo +stable install ldproxy --locked
+cargo +stable install espflash --locked</code></pre></li>
+        <li><h3>현재 셸에 ESP 환경 적용</h3><p><code>espup</code>이 생성한 환경 파일을 새 터미널마다 불러옵니다.</p>
+          <pre><code>source "$HOME/.cargo/env"
+source "$HOME/export-esp.sh"</code></pre></li>
+        <li><h3>프로젝트에서 release 빌드</h3><p>처음에는 ESP-IDF와 카메라 컴포넌트를 받느라 오래 걸립니다. 이후 빌드는 바뀐 부분만 다시 처리합니다.</p>
+          <pre><code>cd /Users/changwoo/Desktop/project/cam-rover-esp32
+cargo build --release</code></pre></li>
+        <li><h3>USB 포트 확인 후 업로드</h3><p>아래 포트 이름은 실제로 확인했던 예시입니다. 다시 연결하면 번호가 달라질 수 있으므로 먼저 목록을 확인하세요. 자동으로 다운로드 모드에 들어가지 않으면 BOOT를 누른 채 RESET을 한 번 누르고 다시 업로드하세요. 완료 후 BOOT에서 손을 떼고 RESET을 누릅니다.</p>
+          <pre><code>espflash list-ports
+espflash flash --port /dev/cu.usbserial-1410 \
+  target/xtensa-esp32-espidf/release/cam-rover-esp32</code></pre></li>
+        <li><h3>대안: Cargo 명령 하나로 빌드·업로드·로그 보기</h3><p>위의 빌드와 업로드 명령 대신 사용할 수 있습니다. 이 저장소의 <code>.cargo/config.toml</code>이 <code>espflash flash --monitor</code>를 runner로 지정하므로, <code>cargo run</code>은 Mac에서 로봇 프로그램을 실행하는 명령이 아닙니다. 포트가 여러 개면 선택을 요청할 수 있습니다.</p>
+          <pre><code>cargo run --release</code></pre></li>
+        <li><h3>선택: 직렬 로그와 통합 BIN</h3><p>로그 확인과 배포용 통합 이미지는 필요할 때만 실행합니다. <code>save-image</code>는 기존 ELF를 BIN으로 포장하며 다시 컴파일하지 않습니다.</p>
+          <pre><code>espflash monitor --port /dev/cu.usbserial-1410 \
+  --elf target/xtensa-esp32-espidf/release/cam-rover-esp32
+
+espflash save-image --chip esp32 --merge \
+  target/xtensa-esp32-espidf/release/cam-rover-esp32 \
+  target/xtensa-esp32-espidf/release/cam-rover-esp32.bin</code></pre></li>
+      </ol>
+      <div class="note"><p><strong>핵심:</strong> USB 케이블 연결에는 빌드가 필요 없습니다. 소스를 변경해서 새 펌웨어를 넣을 때만 다시 <code>cargo build --release</code> 후 업로드합니다.</p></div>
+    </section>
+
+    <section id="runtime" aria-labelledby="runtime-title">
+      <h2 id="runtime-title">업로드 후 실제 실행 위치</h2>
+      <p class="section-intro">Mac에서 만든 기계어가 ESP32 플래시에 저장됩니다. 전원을 켜면 ESP32가 펌웨어를 읽어 실행합니다.</p>
+      <div class="runtime" role="img" aria-label="Mac에서 펌웨어를 빌드한 뒤 USB로 ESP32 플래시에 기록하고 ESP32에서 Wi-Fi, 영상, 모터 제어가 실행되는 순서">
+        <div><strong>Mac</strong><span>Cargo + Rust + ESP-IDF로 빌드</span></div><div class="arrow" aria-hidden="true">→</div>
+        <div><strong>USB</strong><span>espflash가 펌웨어 기록</span></div><div class="arrow" aria-hidden="true">→</div>
+        <div><strong>ESP32 플래시</strong><span>전원이 꺼져도 펌웨어 유지</span></div><div class="arrow" aria-hidden="true">→</div>
+        <div><strong>ESP32 실행</strong><span>Wi-Fi AP · 카메라 · 모터</span></div>
+      </div>
+    </section>
+
+    <section id="faq" aria-labelledby="faq-title"><h2 id="faq-title">헷갈리기 쉬운 점</h2><div class="card panel">
+      <details><summary><code>.cargo</code>와 <code>~/.cargo</code>는 같은 곳인가요?</summary><p>아니요. 프로젝트의 <code>.cargo/config.toml</code>은 이 펌웨어의 타깃 설정입니다. 사용자 홈의 <code>~/.cargo/bin</code>에는 Cargo와 espflash 같은 실행 도구가 설치됩니다.</p></details>
+      <details><summary><code>cargo run</code>은 Mac에서 로봇 프로그램을 실행하나요?</summary><p>아니요. 이 프로젝트의 실행 대상은 <code>xtensa-esp32-espidf</code>이고, 설정된 runner는 <code>espflash flash --monitor</code>입니다. 따라서 실행 단계는 보드 업로드와 직렬 모니터로 이어집니다.</p></details>
+      <details><summary>HTML 화면에 Node.js가 없어도 되나요?</summary><p>네. <code>src/web/index.html</code>은 Rust의 <code>include_str!</code>로 펌웨어에 포함됩니다. npm 설치나 프런트엔드 빌드가 없습니다.</p></details>
+      <details><summary>카메라 드라이버가 C이면 Rust 프로젝트가 아닌가요?</summary><p>프로그램의 제어 흐름은 Rust에 있습니다. 카메라와 모터의 저수준 하드웨어 호출만 ESP-IDF C API를 통해 연결합니다. Rust 코드가 C 함수를 호출하도록 <code>.h</code> 선언에서 바인딩이 생성됩니다.</p></details>
+    </div></section>
+  </main>
+  <footer><div class="wrap">Cam Rover ESP32 · 현재 저장소의 설정을 기준으로 작성 · <a href="../README.md">프로젝트 README</a></div></footer>
+  <script>
+    (() => {
+      const descriptions = [
+        ['소스 파일', 'src/*.rs에 로봇 앱을 작성합니다. components/의 C·H 파일은 OV3660/OV2640 카메라와 LEDC 모터 제어를 ESP-IDF에 연결합니다.'],
+        ['Cargo가 빌드를 시작', 'cargo build --release가 Cargo.toml의 Rust 의존성을 읽고, .cargo/config.toml의 xtensa-esp32-espidf 타깃과 ldproxy 링커를 적용합니다.'],
+        ['ESP-IDF가 하드웨어 부분을 빌드', 'esp-idf-sys가 .embuild/에 SDK와 컴파일 도구를 준비하고, esp32-camera와 rover_hardware C 코드를 함께 컴파일합니다.'],
+        ['ESP32용 실행 파일 생성', 'Rust 코드와 C 라이브러리를 링크해 target/xtensa-esp32-espidf/release/cam-rover-esp32 ELF를 만듭니다. 이 파일은 Mac 프로그램이 아닙니다.'],
+        ['USB로 기록', 'espflash flash가 ELF의 앱, 부트로더, 파티션 정보를 ESP32 플래시에 씁니다. .bin 통합 이미지는 필요할 때 별도로 만들 수 있습니다.'],
+        ['로봇에서 실행', 'ESP32를 재부팅하면 카메라, Wi-Fi AP, 웹 조종 화면과 모터 제어가 보드에서 실행됩니다. Mac이나 Node.js를 계속 켜둘 필요가 없습니다.']
+      ];
+      const steps = [...document.querySelectorAll('.flow-step')];
+      const detail = document.getElementById('flow-detail');
+      const play = document.getElementById('play-flow');
+      let current = 0;
+      let timer = null;
+      function show(index) {
+        current = index;
+        steps.forEach((step, i) => {
+          if (i === index) step.setAttribute('aria-current', 'step');
+          else step.removeAttribute('aria-current');
+        });
+        detail.replaceChildren();
+        const heading = document.createElement('strong');
+        heading.textContent = `${String(index + 1).padStart(2, '0')} · ${descriptions[index][0]}`;
+        const body = document.createElement('p');
+        body.textContent = descriptions[index][1];
+        detail.append(heading, body);
+      }
+      function pause() {
+        if (timer) clearInterval(timer);
+        timer = null;
+        play.textContent = '▶ 재생';
+        play.setAttribute('aria-label', '흐름 애니메이션 재생');
+      }
+      steps.forEach((step, i) => step.addEventListener('click', () => { pause(); show(i); }));
+      document.getElementById('next-flow').addEventListener('click', () => { pause(); show((current + 1) % steps.length); });
+      play.addEventListener('click', () => {
+        if (timer) { pause(); return; }
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { show((current + 1) % steps.length); return; }
+        play.textContent = 'Ⅱ 일시정지';
+        play.setAttribute('aria-label', '흐름 애니메이션 일시정지');
+        timer = setInterval(() => {
+          if (current === steps.length - 1) { pause(); return; }
+          show(current + 1);
+        }, 1550);
+      });
+      show(0);
+    })();
+  </script>
+</body>
+</html>
