@@ -1,36 +1,111 @@
 # Cam Rover ESP32 (Rust)
 
-Keyestudio KS5024 ESP32-CAM 4WD 로봇용 Rust 펌웨어입니다. 애플리케이션, Wi-Fi, HTTP 제어 및 안전 로직은 Rust로 작성했고, OV2640 카메라와 LEDC 모터 PWM의 저수준 초기화만 Espressif ESP-IDF C 드라이버를 얇게 감싸 사용합니다.
+[한국어 README](README.ko.md)
 
-Rust 도구 설치부터 빌드·업로드·보드 실행까지의 시각적 설명은 [HTML 빌드 안내서](docs/rust-build-guide.html)를 참고하세요.
+Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi, HTTP control, motion decisions, and the safety timeout. A small C component calls ESP-IDF and `esp32-camera` APIs for the camera, motor PWM, and flash LED. Arduino IDE and Node.js are not required to build this firmware.
 
-## 제공 기능
+## Features
 
-- 로봇 자체 WPA2 Wi-Fi AP (`cam-rover` / `camrover`)
-- `http://192.168.71.1` 모바일 제어 화면
-- OV2640/OV3660 MJPEG 영상 스트림
-- 전진, 후진, 좌/우 제자리 회전, 네 방향 대각선 주행, 정지
-- 가청 소음을 줄인 20kHz PWM 속도 조절(85~255)과 GPIO4 플래시 LED
-- 마지막 이동 명령 후 700ms가 지나면 자동 정지하는 dead-man 안전장치
+- WPA2 access point: `cam-rover` (default password: `camrover`)
+- Mobile control page at `http://192.168.71.1`
+- OV2640/OV3660 MJPEG video stream
+- Forward, backward, left/right rotation, four diagonal directions, and stop
+- 20 kHz motor PWM with speed control from 85 to 255; GPIO4 flash LED
+- Automatic motor stop 700 ms after the last movement command
 
-## 하드웨어 배선
+## How the Rust and C parts fit together
 
-공식 KS5024 문서와 동일합니다.
+The `.h` file declares the functions shared across the language boundary; the `.c` file implements them. `CMakeLists.txt` is the conventional ESP-IDF component build file: it names the C source, public header directory, and component dependencies. `Cargo.toml` points `esp-idf-sys` to the component directory and header from which Rust bindings are generated. `#include` makes declarations available to the C compiler; it does not copy an entire SDK into the source file. The build system compiles the C implementation and links it with the Rust application.
 
-| ESP32-CAM | L298N |
+For example, `rover_hardware.c` includes these headers (among others):
+
+```c
+#include "rover_hardware.h"
+#include "driver/gpio.h"
+#include "driver/ledc.h"
+#include "esp_camera.h"
+#include "esp_psram.h"
+```
+
+`REQUIRES esp32-camera driver esp_psram` in `CMakeLists.txt` makes the corresponding headers and libraries available. The declarations are checked during C compilation; the implementations are linked into the firmware later.
+
+```mermaid
+flowchart TD
+    A["Cargo.toml: extra_components"] --> B["esp-idf-sys build"]
+    B --> C["ESP-IDF SDK 5.4.3 in .embuild/"]
+    B --> D["esp32-camera in target/.../managed_components/"]
+    B -->|"loads registered component"| E["CMakeLists.txt: SRCS, INCLUDE_DIRS, REQUIRES"]
+    E --> F["Compile rover_hardware.c"]
+    C -->|"#include driver/gpio.h, driver/ledc.h, esp_psram.h"| F
+    D -->|"#include esp_camera.h"| F
+    H["rover_hardware.h: C declarations"] -->|"#include rover_hardware.h"| F
+    H --> G["Generate Rust rover FFI bindings"]
+    F --> J["Link C object and Rust code"]
+    G --> J
+    R["src/*.rs"] --> J
+    J --> I["ESP32 ELF in target/.../release/"]
+```
+
+The runtime call path is separate from the build process:
+
+```mermaid
+flowchart LR
+    A["Phone: control or video request"] --> B["src/main.rs: HTTP and application logic"]
+    B --> C["esp-idf-svc Rust wrappers"]
+    C --> D["ESP-IDF Wi-Fi and HTTP"]
+    B --> E["src/hardware.rs: Rust wrapper"]
+    E --> F["Generated rover FFI bindings"]
+    F --> G["rover_hardware.c"]
+    G --> H["ESP-IDF GPIO/LEDC and esp32-camera APIs"]
+    H --> I["ESP32 camera, motors, and LED"]
+```
+
+| Operation | C bridge and SDK call | Result |
+| --- | --- | --- |
+| Initialize camera | `esp_psram_is_initialized`, `esp_camera_init`, sensor flip settings | Selects frame buffers and JPEG settings for the camera |
+| Capture/release a frame | `esp_camera_fb_get` / `esp_camera_fb_return` | Rust serves JPEG bytes as MJPEG, then returns the buffer |
+| Drive motors | `ledc_timer_config`, `ledc_channel_config`, `ledc_set_duty` | Sets 20 kHz PWM on the L298N input pins |
+| Toggle light | `gpio_config`, `gpio_set_level` | Controls GPIO4 flash LED |
+
+Rust uses `esp-idf-svc` directly for Wi-Fi and HTTP. Only the camera, motor PWM, and LED operations go through the local C bridge; captured frame bytes travel back through that bridge to the Rust HTTP stream. Calling C through FFI is a design choice for these existing drivers, not a general requirement of Rust.
+
+## Source and dependency locations
+
+| Path | Purpose |
 | --- | --- |
-| GPIO14 | IN1 (오른쪽) |
-| GPIO15 | IN2 (오른쪽) |
-| GPIO13 | IN3 (왼쪽) |
-| GPIO12 | IN4 (왼쪽) |
+| `Cargo.toml` | Rust dependencies and ESP-IDF 5.4.3 / `esp32-camera` 2.1.7 configuration |
+| `Cargo.lock` | Resolved Rust crate versions |
+| `components_esp32.lock` | Generated ESP-IDF component versions; excluded from Git in this repository |
+| `rust-toolchain.toml`, `.cargo/config.toml` | ESP Xtensa toolchain, target, linker, and flash runner |
+| `src/*.rs` | Rust application, motion logic, and safe wrappers around the C calls |
+| `src/web/index.html` | Control page embedded in the firmware with `include_str!` |
+| `components/rover_hardware/include/rover_hardware.h` | C declarations used to generate Rust bindings |
+| `components/rover_hardware/rover_hardware.c` | Camera, motor, and LED implementation using SDK headers |
+| `components/rover_hardware/CMakeLists.txt` | Registers the C source and its ESP-IDF dependencies |
+| `~/.cargo/registry/` | Shared local cache of Rust crate source downloaded by Cargo, normally from crates.io |
+| `~/.rustup/toolchains/esp/` | ESP-capable Rust compiler and standard-library sources installed by `espup` |
+| `.embuild/espressif/` | ESP-IDF SDK, C tools, and Python environment prepared by the first build and reused later |
+| `target/.../managed_components/` | ESP-IDF Component Manager's downloaded components, including `esp32-camera` |
+| `target/xtensa-esp32-espidf/release/` | Build intermediates and the final ESP32 ELF; an optional merged `.bin` may also be here |
+
+`target/` is not one firmware file. The file without an extension at `target/xtensa-esp32-espidf/release/cam-rover-esp32` is the ELF passed to `espflash`. A merged `.bin`, if generated separately, is a flash image. Neither `.embuild/` nor `~/.cargo/registry/` runs on the robot; the ESP32 executes the firmware written to its flash.
+
+## Hardware wiring
+
+| ESP32-CAM | L298N input |
+| --- | --- |
+| GPIO14 | IN1 (right) |
+| GPIO15 | IN2 (right) |
+| GPIO13 | IN3 (left) |
+| GPIO12 | IN4 (left) |
 | 5V | 5V |
 | GND | GND |
 
-L298N의 ENA/ENB 점퍼는 꽂아 둡니다. microSD 핀과 모터 핀이 겹치므로 이 펌웨어에서는 microSD를 사용할 수 없습니다.
+Keep the L298N ENA/ENB jumpers fitted. This firmware cannot use microSD because its pins overlap the motor pins.
 
-## macOS 개발 환경
+## macOS development setup
 
-ESP32는 Xtensa라서 일반 Rust 설치만으로는 빌드되지 않습니다. 먼저 Apple Command Line Tools와 Rust/ESP 도구를 설치합니다.
+The ESP32 target uses Xtensa, so an ordinary host-only Rust installation is insufficient. Run the following once on a new Mac; skip the Apple Command Line Tools command if they are already installed. Open a new terminal if the Rust installer asks you to.
 
 ```bash
 xcode-select --install
@@ -38,45 +113,62 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 cargo +stable install espup --locked
 espup install
-source "$HOME/export-esp.sh"
 cargo +stable install ldproxy --locked
 cargo +stable install espflash --locked
 ```
 
-CH340 포트가 나타나지 않을 때만 첨부된 `/Users/changwoo/Downloads/MAC/CH34xVCPDriver.dmg` 드라이버를 설치하세요. 최근 macOS는 드라이버 없이 인식되는 경우도 있습니다.
+In each new terminal session used for building, load the ESP environment:
 
-## 빌드와 업로드
+```bash
+source "$HOME/.cargo/env"
+source "$HOME/export-esp.sh"
+```
 
-1. 배터리/모터 전원은 끄고 USB-C로 ESP32-CAM 어댑터를 연결합니다.
-2. BOOT 버튼을 누른 채 RESET을 한 번 눌러 다운로드 모드로 진입합니다.
-3. 포트를 확인하고 업로드합니다.
+`espup` installs the ESP-capable Rust toolchain; `ldproxy` links Rust with ESP-IDF; `espflash` writes the result over USB. The initial `cargo build` downloads and prepares the specified ESP-IDF SDK and its C tools. Cargo fetches Rust crates to `~/.cargo/registry/`; the ESP-IDF Component Manager fetches `esp32-camera` and its dependencies into the build output. Later builds reuse what is already present. No manual Arduino IDE or Node.js installation is needed.
+
+If no USB serial port appears, check the USB cable and adapter first. Some CH340-based adapters may need a macOS serial driver.
+
+## Build, flash, and run
+
+Run these commands from the repository root. Keep the battery/motor power off while connecting the USB adapter, and test with the wheels raised. Replace the example port with the value returned by `espflash list-ports`.
 
 ```bash
 espflash list-ports
 cargo build --release
-espflash flash --monitor --port /dev/cu.wchusbserialXXXX \
+espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-업로드가 끝나면 BOOT에서 손을 떼고 RESET을 누릅니다. 휴대폰에서 `cam-rover`에 연결한 뒤 `http://192.168.71.1`을 엽니다.
+If the adapter does not automatically enter download mode, hold BOOT and tap RESET, then retry the flash command. After flashing, release BOOT and tap RESET. Connect a phone to `cam-rover` using the default password `camrover`, then open `http://192.168.71.1`.
 
-Wi-Fi 이름과 암호, 영상 상하 반전은 빌드 환경변수로 바꿀 수 있습니다. 암호는 8자 이상이어야 합니다.
+For a combined build, flash, and serial monitor, the repository's Cargo runner also supports:
+
+```bash
+cargo run --release
+```
+
+Here `cargo run` runs the ELF on the **ESP32**, not on the Mac: `.cargo/config.toml` sets the runner to `espflash flash --monitor`. If several serial ports are available, `espflash` may ask you to choose one. Use Ctrl-C to leave the monitor.
+
+## Build-time configuration
+
+Wi-Fi credentials and camera vertical flip are compiled into the firmware. The WPA2 password must contain at least eight characters. By default, the video is flipped vertically to match the camera mounting.
 
 ```bash
 ROVER_WIFI_SSID=my-rover \
 ROVER_WIFI_PASSWORD=change-me \
 ROVER_VIDEO_FLIP=0 \
 cargo build --release
-espflash flash --monitor --port /dev/cu.wchusbserialXXXX \
+
+espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-카메라는 조립 방향에 맞춰 기본적으로 상하 반전됩니다. 반전하지 않으려면
-`ROVER_VIDEO_FLIP=0`으로 빌드하세요.
+Set `ROVER_VIDEO_FLIP=0` only if you do **not** want the default vertical flip. After changing a build-time value, rebuild and flash again; changing an environment variable does not reconfigure firmware already on the robot.
 
-## 주의
+## Safety and troubleshooting
 
-- 로봇 바퀴를 바닥에서 띄운 상태로 처음 시험하세요.
-- ESP32-CAM은 2.4GHz Wi-Fi만 지원합니다.
-- 영상 스트림은 로컬 AP 내부의 암호화되지 않은 HTTP입니다. 인터넷에 포트 포워딩하지 마세요.
-- 전원 강하로 재부팅되면 배터리 상태, 공통 GND, L298N 5V 점퍼와 배선을 먼저 확인하세요.
+- Raise the wheels for the first motor test. The safety task stops motion 700 ms after the last movement command.
+- The ESP32-CAM uses 2.4 GHz Wi-Fi. The video stream is plain HTTP inside the local AP; do not expose it to the internet with port forwarding.
+- If the device resets or the camera stream stutters while driving, check battery voltage, the shared ground, and the L298N power wiring.
+- A missing serial port usually indicates a cable, adapter, driver, or permission issue. A flash connection failure may require BOOT + RESET as described above.
+- The first build may take a long time because it downloads and compiles SDK components. Build output appears under `target/`; deleting that directory discards build artifacts, not the source code.
