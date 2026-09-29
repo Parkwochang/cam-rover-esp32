@@ -1,30 +1,23 @@
 mod control;
 mod hardware;
+mod network;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use control::{parse_query, Motion};
 use embedded_svc::http::Method;
 use embedded_svc::io::Write;
-use embedded_svc::wifi::{AccessPointConfiguration, AuthMethod, Configuration};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::server::{Configuration as HttpConfiguration, EspHttpServer};
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
-use log::{error, info, warn};
+use log::{error, warn};
 
-const WIFI_SSID: &str = match option_env!("ROVER_WIFI_SSID") {
-    Some(value) => value,
-    None => "cam-rover",
-};
-const WIFI_PASSWORD: &str = match option_env!("ROVER_WIFI_PASSWORD") {
-    Some(value) => value,
-    None => "camrover",
-};
 const INDEX_HTML: &str = include_str!("web/index.html");
 const STREAM_BOUNDARY: &str = "roverframe";
 const COMMAND_TIMEOUT: Duration = Duration::from_millis(700);
@@ -62,10 +55,6 @@ fn main() -> Result<()> {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
 
-    if WIFI_PASSWORD.len() < 8 {
-        anyhow::bail!("ROVER_WIFI_PASSWORD must contain at least 8 characters");
-    }
-
     let video_flip = option_env!("ROVER_VIDEO_FLIP") != Some("0");
     hardware::initialize(video_flip)?;
 
@@ -73,50 +62,41 @@ fn main() -> Result<()> {
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
     let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
+        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs.clone()))?,
         sys_loop,
     )?;
-    start_access_point(&mut wifi)?;
+    let network_store = Arc::new(Mutex::new(network::NetworkStore::new(nvs)?));
+    let network_status = network::start(&mut wifi, &network_store.lock().unwrap())?;
+    let restart_requested = Arc::new(AtomicBool::new(false));
 
     let state = Arc::new(Mutex::new(RoverState::new()));
-    let control_server = start_control_server(state.clone())?;
+    let control_server = start_control_server(
+        state.clone(),
+        network_store,
+        network_status,
+        restart_requested.clone(),
+    )?;
     let stream_server = start_stream_server()?;
     start_deadman_switch(state)?;
-
-    info!("Rover ready: connect to '{WIFI_SSID}' and open http://192.168.71.1");
 
     // These services must stay alive for the entire firmware lifetime.
     let _services = (wifi, control_server, stream_server);
     loop {
-        std::thread::sleep(Duration::from_secs(60));
+        std::thread::sleep(Duration::from_millis(100));
+        if restart_requested.load(Ordering::Relaxed) {
+            hardware::stop();
+            std::thread::sleep(Duration::from_millis(700));
+            unsafe { esp_idf_svc::sys::esp_restart() };
+        }
     }
 }
 
-fn start_access_point(wifi: &mut BlockingWifi<EspWifi<'static>>) -> Result<()> {
-    let config = Configuration::AccessPoint(AccessPointConfiguration {
-        ssid: WIFI_SSID.try_into().context("Wi-Fi SSID is too long")?,
-        password: WIFI_PASSWORD
-            .try_into()
-            .context("Wi-Fi password is too long")?,
-        auth_method: AuthMethod::WPA2Personal,
-        channel: 6,
-        max_connections: 3,
-        ..Default::default()
-    });
-
-    wifi.set_configuration(&config)?;
-    wifi.start()?;
-    wifi.wait_netif_up()?;
-
-    let result =
-        unsafe { esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE) };
-    if result != 0 {
-        anyhow::bail!("failed to disable Wi-Fi power saving: ESP-IDF error {result}");
-    }
-    Ok(())
-}
-
-fn start_control_server(state: Arc<Mutex<RoverState>>) -> Result<EspHttpServer<'static>> {
+fn start_control_server(
+    state: Arc<Mutex<RoverState>>,
+    network_store: Arc<Mutex<network::NetworkStore>>,
+    network_status: network::NetworkStatus,
+    restart_requested: Arc<AtomicBool>,
+) -> Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&HttpConfiguration {
         http_port: 80,
         ctrl_port: 32768,
@@ -182,6 +162,57 @@ fn start_control_server(state: Arc<Mutex<RoverState>>) -> Result<EspHttpServer<'
             }
         }
         request.into_ok_response()?.write_all(b"ok")?;
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    server.fn_handler("/api/network", Method::Get, move |request| {
+        request
+            .into_response(200, Some("OK"), &[("Content-Type", "application/json")])?
+            .write_all(network_status.json().to_string().as_bytes())?;
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    server.fn_handler("/api/network", Method::Post, move |mut request| {
+        let length = request
+            .header("Content-Length")
+            .and_then(|value| value.parse::<usize>().ok());
+        if !matches!(length, Some(1..=256)) {
+            request
+                .into_status_response(400)?
+                .write_all(b"body must be 1-256 bytes")?;
+            return Ok::<(), anyhow::Error>(());
+        }
+        let mut body = vec![0u8; length.unwrap()];
+        let mut count = 0;
+        while count < body.len() {
+            let read = request.read(&mut body[count..])?;
+            if read == 0 {
+                break;
+            }
+            count += read;
+        }
+        let command = serde_json::from_slice(&body[..count]);
+        let result = command
+            .as_ref()
+            .map_err(|_| "invalid JSON")
+            .and_then(|command| network_store.lock().unwrap().apply_command(command));
+        match result {
+            Ok(()) => {
+                request
+                    .into_response(
+                        202,
+                        Some("Accepted"),
+                        &[("Content-Type", "application/json")],
+                    )?
+                    .write_all(b"{\"switching\":true}")?;
+                restart_requested.store(true, Ordering::Relaxed);
+            }
+            Err(message) => {
+                request
+                    .into_status_response(400)?
+                    .write_all(message.as_bytes())?;
+            }
+        }
         Ok::<(), anyhow::Error>(())
     })?;
 

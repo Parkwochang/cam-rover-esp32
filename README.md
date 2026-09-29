@@ -7,6 +7,7 @@ Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi,
 ## Features
 
 - WPA2 access point: `cam-rover` (default password: `camrover`)
+- Switch between the robot AP and 2.4 GHz home Wi-Fi using the web page or HTTP API; connection failures fall back to the AP
 - Mobile control page at `http://192.168.71.1`
 - OV2640/OV3660 MJPEG video stream
 - Forward, backward, left/right rotation, four diagonal directions, and stop
@@ -149,9 +150,29 @@ cargo run --release
 
 Here `cargo run` runs the ELF on the **ESP32**, not on the Mac: `.cargo/config.toml` sets the runner to `espflash flash --monitor`. If several serial ports are available, `espflash` may ask you to choose one. Use Ctrl-C to leave the monitor.
 
+## HTTP control and network mode
+
+The control page offers home Wi-Fi and robot AP buttons. Home Wi-Fi credentials are saved in the ESP32's NVS flash, not compiled into the firmware. Switching stops the motors and reboots the board. Use a 2.4 GHz WPA2-personal network with an 8–63-byte password. Find the assigned IP in the router's DHCP list or USB serial log; a DHCP reservation is useful for a Raspberry Pi server. If connection fails, the robot restores its `cam-rover` AP at `http://192.168.71.1` while keeping the saved credentials.
+
+From a Raspberry Pi on the same network, substitute the robot's IP for `ROVER_IP`. Repeat movement commands more often than every 700 ms; the safety timer otherwise stops the motors. Send `stop` when releasing a control.
+
+```bash
+curl "http://ROVER_IP/api/move?direction=forward-left"
+curl "http://ROVER_IP/api/move?direction=stop"
+curl "http://ROVER_IP/api/speed?value=170"
+curl "http://ROVER_IP/api/light?on=1"
+curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"ap"}'
+```
+
+`GET /api/network` returns active/preferred mode, SSID, IP, and fallback status, never the password. `POST /api/network` returns HTTP 202 before reboot; `{ "mode": "sta" }` retries saved credentials. Invalid inputs return 400. HTTP control and video have no authentication or encryption: use only a trusted local network, and do not port-forward ports 80/81.
+
 ## Build-time configuration
 
-Wi-Fi credentials and camera vertical flip are compiled into the firmware. The WPA2 password must contain at least eight characters. By default, the video is flipped vertically to match the camera mounting.
+Robot AP credentials and camera vertical flip are compiled into the firmware; home Wi-Fi credentials are configured at runtime. The AP WPA2 password must contain 8–63 bytes. By default, the video is flipped vertically to match the camera mounting.
 
 ```bash
 ROVER_WIFI_SSID=my-rover \

@@ -21,6 +21,14 @@
     input[type=range] { width: 190px; }
     #light { min-height: 44px; padding: 0 18px; font-size: 1rem; }
     small { display: block; margin-top: 14px; color: #9ca8bb; }
+    .network { margin-top: 24px; padding: 16px; text-align: left; background: #1b2230; border-radius: 14px; }
+    .network h2 { margin: 0 0 8px; font-size: 1.1rem; }
+    .network p { color: #c2ccda; line-height: 1.5; }
+    .network label { display: block; margin: 10px 0; }
+    .network input { display: block; width: 100%; margin-top: 5px; padding: 10px; background: #101319; border: 1px solid #66738a; border-radius: 8px; color: white; font-size: 1rem; }
+    .network .actions { display: flex; gap: 10px; }
+    .network button { min-height: 44px; padding: 0 14px; font-size: .95rem; }
+    .network button:disabled { opacity: .5; }
   </style>
 </head>
 <body>
@@ -43,6 +51,17 @@
     <button id="light">라이트 끔</button>
   </div>
   <small>버튼을 누르는 동안만 움직이며 손을 떼면 즉시 정지합니다. 키보드 방향키/WASD와 Q/E/Z/C 대각선 키도 지원합니다.</small>
+  <section class="network">
+    <h2>네트워크 설정</h2>
+    <p id="networkStatus">현재 연결 상태 확인 중…</p>
+    <label>집 Wi-Fi 이름 (2.4 GHz)<input id="homeSsid" autocomplete="off" maxlength="32"></label>
+    <label>집 Wi-Fi 암호<input id="homePassword" type="password" autocomplete="off" minlength="8" maxlength="63"></label>
+    <div class="actions">
+      <button id="useHomeWifi">집 Wi-Fi 연결</button>
+      <button id="useAp">로봇 AP 사용</button>
+    </div>
+    <p id="networkMessage" role="status">전환하면 로봇이 재시작되어 현재 연결이 끊깁니다. 집 Wi-Fi IP는 공유기 DHCP 목록 또는 USB 직렬 로그에서 확인하세요.</p>
+  </section>
 </main>
 <script>
   const send = (path) => fetch(path, {cache: 'no-store'}).catch(() => {});
@@ -95,6 +114,50 @@
     if (keys[event.key]) { event.preventDefault(); pressed.delete(event.key); setMotion('stop'); }
   });
   addEventListener('blur', () => setMotion('stop'));
+
+  const networkStatus = document.getElementById('networkStatus');
+  const networkMessage = document.getElementById('networkMessage');
+  const homeSsid = document.getElementById('homeSsid');
+  const homePassword = document.getElementById('homePassword');
+  const networkButtons = [document.getElementById('useHomeWifi'), document.getElementById('useAp')];
+  let savedHomeSsid = '';
+  let hasSavedHomeWifi = false;
+  fetch('/api/network', {cache: 'no-store'}).then((response) => response.json()).then((status) => {
+    networkStatus.textContent = `현재: ${status.mode === 'sta' ? '집 Wi-Fi' : '로봇 AP'} (${status.ssid}, ${status.ip})` +
+      (status.fallback ? ' — 집 Wi-Fi 접속 실패, AP로 복구됨' : '');
+    hasSavedHomeWifi = status.sta_configured;
+    if (status.mode === 'sta') {
+      savedHomeSsid = status.ssid;
+      homeSsid.value = status.ssid;
+    }
+  }).catch(() => { networkStatus.textContent = '네트워크 상태를 읽지 못했습니다.'; });
+
+  async function switchNetwork(command) {
+    setMotion('stop');
+    networkButtons.forEach((button) => button.disabled = true);
+    networkMessage.textContent = '설정을 저장하는 중…';
+    try {
+      const response = await fetch('/api/network', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(command),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      homePassword.value = '';
+      networkMessage.textContent = command.mode === 'sta'
+        ? '로봇이 재시작됩니다. 이 기기를 집 Wi-Fi에 연결하고, 공유기 DHCP 목록 또는 USB 직렬 로그에서 로봇 IP를 확인하세요. 접속 실패 시 cam-rover AP로 복구됩니다.'
+        : '로봇이 재시작됩니다. cam-rover Wi-Fi에 연결한 뒤 http://192.168.71.1 을 여세요.';
+    } catch (error) {
+      networkMessage.textContent = `설정 실패: ${error.message}`;
+      networkButtons.forEach((button) => button.disabled = false);
+    }
+  }
+  networkButtons[0].addEventListener('click', () => {
+    const ssid = homeSsid.value;
+    const password = homePassword.value;
+    if (ssid && password) switchNetwork({mode: 'sta', ssid, password});
+    else if (!password && hasSavedHomeWifi && (!ssid || ssid === savedHomeSsid)) switchNetwork({mode: 'sta'});
+    else networkMessage.textContent = 'Wi-Fi 이름과 암호를 모두 입력하세요.';
+  });
+  networkButtons[1].addEventListener('click', () => switchNetwork({mode: 'ap'}));
 </script>
 </body>
 </html>

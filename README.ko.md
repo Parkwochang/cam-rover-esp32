@@ -7,6 +7,7 @@ Keyestudio KS5024 ESP32-CAM 4WD 로봇용 Rust 펌웨어입니다. Wi-Fi, HTTP �
 ## 제공 기능
 
 - 로봇 자체 WPA2 Wi-Fi AP: `cam-rover` (기본 암호: `camrover`)
+- 웹 화면 또는 HTTP API로 로봇 AP와 2.4GHz 집 Wi-Fi 전환, 연결 실패 시 AP 복구
 - `http://192.168.71.1` 모바일 제어 화면
 - OV2640/OV3660 MJPEG 영상 스트림
 - 전진, 후진, 좌우 제자리 회전, 네 방향 대각선 주행, 정지
@@ -149,9 +150,29 @@ cargo run --release
 
 이 프로젝트에서 `cargo run`은 Mac에서 로봇 프로그램을 실행하지 않습니다. `.cargo/config.toml`의 runner가 `espflash flash --monitor`이므로 **ESP32에 기록하고 보드 로그를 보는 명령**입니다. 직렬 포트가 여러 개라면 `espflash`가 선택을 요청할 수 있습니다. Ctrl-C로 모니터를 종료합니다.
 
+## HTTP 제어와 네트워크 모드
+
+조종 화면의 버튼 또는 HTTP API로 집 Wi-Fi와 로봇 AP를 선택합니다. 집 Wi-Fi 이름과 암호는 펌웨어에 넣는 대신 ESP32의 NVS 플래시에 저장합니다. 모드 전환 시 모터를 정지하고 보드를 재시작합니다. 집 Wi-Fi는 2.4GHz WPA2-personal 방식이어야 하며 암호는 8~63바이트입니다. 로봇 IP는 공유기 DHCP 접속 기기 목록 또는 USB 직렬 로그에서 확인하세요. 라즈베리 파이 서버에서 주소를 고정해 사용하려면 공유기의 DHCP 주소 예약이 유용합니다. 연결에 실패하면 저장된 정보는 유지하고 `cam-rover` AP(`http://192.168.71.1`)로 복구합니다.
+
+라즈베리 파이도 같은 네트워크에 연결한 후 아래 명령을 보낼 수 있습니다. `ROVER_IP`를 실제 로봇 주소로 바꾸세요. 이동 명령은 700ms보다 짧은 주기로 반복하고, 버튼을 놓으면 `stop`을 보내세요.
+
+```bash
+curl "http://ROVER_IP/api/move?direction=forward-left"
+curl "http://ROVER_IP/api/move?direction=stop"
+curl "http://ROVER_IP/api/speed?value=170"
+curl "http://ROVER_IP/api/light?on=1"
+curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"ap"}'
+```
+
+`GET /api/network`는 실제/선호 모드, SSID, IP, AP 복구 여부를 반환하지만 암호는 반환하지 않습니다. `POST /api/network`는 재시작 전 HTTP 202를 반환합니다. `{ "mode": "sta" }`는 저장된 접속 정보로 재시도하며 잘못된 입력은 400을 반환합니다. HTTP 제어와 영상에는 인증·암호화가 없으므로 신뢰할 수 있는 로컬 네트워크에서만 사용하고 80/81 포트를 외부에 개방하지 마세요.
+
 ## 빌드 시점 설정
 
-Wi-Fi 이름·암호와 카메라 상하 반전 설정은 펌웨어에 컴파일되어 들어갑니다. WPA2 암호는 8자 이상이어야 합니다. 카메라 조립 방향에 맞춰 기본값은 상하 반전입니다.
+로봇 AP 이름·암호와 카메라 상하 반전 설정은 펌웨어에 컴파일되어 들어갑니다. 집 Wi-Fi 정보는 실행 중 설정합니다. AP WPA2 암호는 8~63바이트여야 합니다. 카메라 조립 방향에 맞춰 기본값은 상하 반전입니다.
 
 ```bash
 ROVER_WIFI_SSID=my-rover \
