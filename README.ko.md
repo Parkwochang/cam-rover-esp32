@@ -2,13 +2,13 @@
 
 [English README](README.md)
 
-Keyestudio KS5024 ESP32-CAM 4WD 로봇용 Rust 펌웨어입니다. Wi-Fi, HTTP 제어, 이동 판단, 안전 정지 로직은 Rust로 작성했습니다. 카메라·모터 PWM·플래시 LED의 저수준 제어는 작은 C 컴포넌트가 ESP-IDF와 `esp32-camera` API를 호출합니다. 빌드에 Arduino IDE나 Node.js는 필요하지 않습니다.
+Keyestudio KS5024 ESP32-CAM 4WD 로봇용 Rust 펌웨어입니다. Wi-Fi, HTTP 제어, 이동 판단, 안전 정지 로직은 Rust로 작성했습니다. 카메라·모터 PWM·플래시 LED의 저수준 제어는 작은 C 컴포넌트가 ESP-IDF와 `esp32-camera` API를 호출합니다. 빌드에 Arduino IDE는 필요하지 않습니다.
 
 ## 제공 기능
 
 - 로봇 자체 WPA2 Wi-Fi AP: `cam-rover` (기본 암호: `camrover`)
 - 웹 화면 또는 HTTP API로 로봇 AP와 2.4GHz 집 Wi-Fi 전환, 연결 실패 시 AP 복구
-- `http://192.168.71.1` 모바일 제어 화면
+- AP 모드에서는 `http://192.168.71.1`, STA 모드에서는 공유기가 할당한 IP로 모바일 제어 화면 접속
 - OV2640/OV3660 MJPEG 영상 스트림
 - 전진, 후진, 좌우 제자리 회전, 네 방향 대각선 주행, 정지
 - 가청 소음을 줄인 20kHz 모터 PWM과 85~255 속도 조절, GPIO4 플래시 LED
@@ -47,18 +47,18 @@ flowchart TD
     J --> I["target/.../release/의 ESP32 ELF"]
 ```
 
-보드에서 실행될 때 호출 흐름은 다음과 같습니다.
+보드에서 이동 명령과 안전 정지는 다음 경로로 동작합니다.
 
 ```mermaid
 flowchart LR
-    A["휴대폰: 제어·영상 요청"] --> B["src/main.rs: HTTP·앱 로직"]
-    B --> C["esp-idf-svc Rust 래퍼"]
-    C --> D["ESP-IDF Wi-Fi·HTTP"]
-    B --> E["src/hardware.rs: Rust 래퍼"]
-    E --> F["생성된 rover FFI 바인딩"]
-    F --> G["rover_hardware.c"]
-    G --> H["ESP-IDF GPIO/LEDC·esp32-camera API"]
-    H --> I["ESP32 카메라·모터·LED"]
+    A["웹 화면 또는 라즈베리 파이 Go 서버"] -->|"GET /api/move"| B["Rust HTTP 서버 :80"]
+    B --> C["Motion 파싱·RoverState 갱신"]
+    C --> D["src/hardware.rs · 생성된 FFI"]
+    D --> E["rover_hardware.c: LEDC PWM"]
+    E --> F["L298N 모터"]
+    G["안전 태스크: 100ms마다 검사"] -.->|"last_command 확인"| C
+    G -->|"마지막 명령에서 700ms 초과"| H["hardware::stop()"]
+    H --> F
 ```
 
 | 기능 | C 브리지에서 호출하는 SDK 함수 | 결과 |
@@ -68,7 +68,7 @@ flowchart LR
 | 모터 구동 | `ledc_timer_config`, `ledc_channel_config`, `ledc_set_duty` | L298N 입력 핀에 20kHz PWM 출력 |
 | 조명 제어 | `gpio_config`, `gpio_set_level` | GPIO4 플래시 LED 제어 |
 
-Wi-Fi와 HTTP는 Rust가 `esp-idf-svc`를 통해 직접 사용합니다. 이 프로젝트의 C 브리지는 카메라·모터 PWM·LED에만 사용되며, 촬영한 프레임 데이터는 브리지를 거쳐 Rust의 HTTP 스트림으로 돌아옵니다. C 드라이버를 FFI로 호출하는 것은 이 프로젝트의 설계 선택이지 Rust로 하드웨어를 제어할 때 항상 필요한 조건은 아닙니다.
+Wi-Fi와 HTTP는 Rust가 `esp-idf-svc`를 통해 직접 사용합니다. 이 프로젝트의 C 브리지는 카메라·모터 PWM·LED에만 사용되며, 촬영한 프레임 데이터는 브리지를 거쳐 별도 81번 포트 MJPEG 서버로 전달됩니다. C 드라이버를 FFI로 호출하는 것은 이 프로젝트의 설계 선택이지 Rust로 하드웨어를 제어할 때 항상 필요한 조건은 아닙니다.
 
 ## 소스와 의존성의 위치
 
@@ -79,6 +79,7 @@ Wi-Fi와 HTTP는 Rust가 `esp-idf-svc`를 통해 직접 사용합니다. 이 프
 | `components_esp32.lock` | 생성된 ESP-IDF 컴포넌트 버전. 이 저장소에서는 Git에서 제외 |
 | `rust-toolchain.toml`, `.cargo/config.toml` | ESP Xtensa 툴체인, 타깃, 링커, 업로드 실행 설정 |
 | `src/*.rs` | Rust 앱, 이동 로직, C 호출을 감싼 래퍼 |
+| `src/network.rs` | AP/STA 시작, NVS 설정, STA 접속 실패 시 AP 복구 |
 | `src/web/index.html` | `include_str!`로 펌웨어에 포함되는 조종 화면 |
 | `components/rover_hardware/include/rover_hardware.h` | Rust 바인딩 생성에 쓰는 C 함수 선언 |
 | `components/rover_hardware/rover_hardware.c` | SDK 헤더를 사용한 카메라·모터·LED 구현 |
@@ -125,7 +126,7 @@ source "$HOME/.cargo/env"
 source "$HOME/export-esp.sh"
 ```
 
-`espup`은 ESP용 Rust 툴체인을 설치하고, `ldproxy`는 Rust와 ESP-IDF를 연결하며, `espflash`는 USB로 보드에 기록합니다. 첫 `cargo build`가 지정된 ESP-IDF SDK와 C 도구를 다운로드해 준비합니다. Cargo는 Rust 라이브러리를 `~/.cargo/registry/`에 받고, ESP-IDF 컴포넌트 매니저는 `esp32-camera`와 그 의존성을 빌드 출력 폴더에 받습니다. 이후 빌드는 저장된 파일을 재사용합니다. Arduino IDE와 Node.js를 따로 설치할 필요는 없습니다.
+`espup`은 ESP용 Rust 툴체인을 설치하고, `ldproxy`는 Rust와 ESP-IDF를 연결하며, `espflash`는 USB로 보드에 기록합니다. 첫 `cargo build`가 지정된 ESP-IDF SDK와 C 도구를 다운로드해 준비합니다. Cargo는 Rust 라이브러리를 `~/.cargo/registry/`에 받고, ESP-IDF 컴포넌트 매니저는 `esp32-camera`와 그 의존성을 빌드 출력 폴더에 받습니다. 이후 빌드는 저장된 파일을 재사용합니다. Arduino IDE를 따로 설치할 필요는 없습니다.
 
 USB 직렬 포트가 보이지 않으면 먼저 케이블과 어댑터를 확인하세요. CH340 기반 어댑터 일부는 macOS 직렬 드라이버가 필요할 수 있습니다.
 
@@ -140,7 +141,7 @@ espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-어댑터가 자동으로 다운로드 모드에 들어가지 못하면 BOOT를 누른 채 RESET을 한 번 누르고 업로드를 다시 시도하세요. 업로드가 끝나면 BOOT에서 손을 떼고 RESET을 누릅니다. 휴대폰에서 `cam-rover` Wi-Fi에 기본 암호 `camrover`로 연결한 뒤 `http://192.168.71.1`을 엽니다.
+어댑터가 자동으로 다운로드 모드에 들어가지 못하면 BOOT를 누른 채 RESET을 한 번 누르고 업로드를 다시 시도하세요. 업로드가 끝나면 BOOT에서 손을 떼고 RESET을 누릅니다. STA 설정이 저장되지 않은 첫 부팅에서는 휴대폰을 `cam-rover` Wi-Fi에 기본 암호 `camrover`로 연결한 뒤 `http://192.168.71.1`을 엽니다. 일반적인 펌웨어 업로드는 NVS 설정을 유지하므로, 이미 설정한 보드는 집 Wi-Fi에 재접속할 수 있습니다.
 
 빌드·업로드·직렬 로그 보기를 한 명령으로 실행하는 방법도 있습니다.
 
@@ -152,7 +153,28 @@ cargo run --release
 
 ## HTTP 제어와 네트워크 모드
 
-조종 화면의 버튼 또는 HTTP API로 집 Wi-Fi와 로봇 AP를 선택합니다. 집 Wi-Fi 이름과 암호는 펌웨어에 넣는 대신 ESP32의 NVS 플래시에 저장합니다. 모드 전환 시 모터를 정지하고 보드를 재시작합니다. 집 Wi-Fi는 2.4GHz WPA2-personal 방식이어야 하며 암호는 8~63바이트입니다. 로봇 IP는 공유기 DHCP 접속 기기 목록 또는 USB 직렬 로그에서 확인하세요. 라즈베리 파이 서버에서 주소를 고정해 사용하려면 공유기의 DHCP 주소 예약이 유용합니다. 연결에 실패하면 저장된 정보는 유지하고 `cam-rover` AP(`http://192.168.71.1`)로 복구합니다.
+조종 화면의 버튼 또는 HTTP API로 집 Wi-Fi와 로봇 AP를 선택합니다. 집 Wi-Fi 이름과 암호는 펌웨어에 넣는 대신 ESP32의 NVS 플래시에 저장합니다. HTTP 응답을 먼저 보낸 뒤 모터를 정지하고 보드를 재시작합니다. 집 Wi-Fi는 2.4GHz WPA2-personal 방식이어야 하며 암호는 8~63바이트입니다. 로봇 IP는 공유기 DHCP 접속 기기 목록 또는 USB 직렬 로그에서 확인하세요. 라즈베리 파이 서버에서 주소를 고정해 사용하려면 공유기의 DHCP 주소 예약이 유용합니다. 부팅 중 연결에 실패하면 저장된 정보는 유지하고 `cam-rover` AP(`http://192.168.71.1`)로 복구합니다.
+
+```mermaid
+flowchart TD
+    A["웹 화면 또는 HTTP 명령"] --> B{"선택한 모드"}
+    B -->|"집 Wi-Fi"| C["SSID·암호를 NVS에 저장<br/>선호 모드 = STA"]
+    B -->|"로봇 AP"| D["선호 모드 = AP로 저장"]
+    C --> E["HTTP 202 응답 → 모터 정지 → 재시작"]
+    D --> E
+    E --> F{"부팅 시 선호 모드"}
+    F -->|"AP"| G["cam-rover AP 시작<br/>192.168.71.1"]
+    F -->|"STA"| H{"저장된 접속 정보가 유효한가?"}
+    H -->|"아니요"| G
+    H -->|"예"| I["집 2.4GHz Wi-Fi 접속 시도"]
+    I -->|"연결·DHCP 성공"| J["공유기가 할당한 IP로 제어"]
+    I -->|"부팅 중 접속 실패"| K["STA 중지"]
+    K --> G
+    G --> L["GET /api/network<br/>부팅 시 실제 AP 모드·복구 여부"]
+    J --> M["GET /api/network<br/>부팅 시 실제 STA 모드·할당 IP"]
+```
+
+AP로 복구되더라도 저장된 선호 모드는 STA이므로 다음 재부팅 때 같은 집 Wi-Fi 연결을 다시 시도합니다. `GET /api/network`의 모드·IP는 부팅 때 확정된 값이며 실행 중 Wi-Fi 연결 상태를 계속 감시한 결과는 아닙니다.
 
 라즈베리 파이도 같은 네트워크에 연결한 후 아래 명령을 보낼 수 있습니다. `ROVER_IP`를 실제 로봇 주소로 바꾸세요. 이동 명령은 700ms보다 짧은 주기로 반복하고, 버튼을 놓으면 `stop`을 보내세요.
 
@@ -189,7 +211,7 @@ espflash flash --port /dev/cu.usbserial-XXXX \
 ## 안전과 문제 해결
 
 - 첫 모터 시험에서는 바퀴를 띄우세요. 안전 태스크가 마지막 이동 명령 700ms 뒤 모터를 정지시킵니다.
-- ESP32-CAM은 2.4GHz Wi-Fi를 사용합니다. 영상 스트림은 로컬 AP 안에서 암호화되지 않은 HTTP이므로 인터넷에 포트 포워딩하지 마세요.
+- ESP32-CAM은 2.4GHz Wi-Fi를 사용합니다. AP·STA 양쪽에서 제어와 영상은 암호화되지 않은 HTTP이므로 인터넷에 포트 포워딩하지 마세요.
 - 주행 중 재부팅되거나 영상이 끊기면 배터리 전압, 공통 GND, L298N 전원 배선을 확인하세요.
 - 직렬 포트가 없으면 케이블·어댑터·드라이버·권한을 확인하세요. 업로드 연결에 실패하면 위의 BOOT + RESET 순서를 시도하세요.
 - 첫 빌드는 SDK를 다운로드·컴파일하므로 오래 걸릴 수 있습니다. `target/`을 삭제하면 소스가 아니라 빌드 결과를 버리게 됩니다.

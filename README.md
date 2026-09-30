@@ -2,13 +2,13 @@
 
 [한국어 README](README.ko.md)
 
-Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi, HTTP control, motion decisions, and the safety timeout. A small C component calls ESP-IDF and `esp32-camera` APIs for the camera, motor PWM, and flash LED. Arduino IDE and Node.js are not required to build this firmware.
+Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi, HTTP control, motion decisions, and the safety timeout. A small C component calls ESP-IDF and `esp32-camera` APIs for the camera, motor PWM, and flash LED. Arduino IDE is not required to build this firmware.
 
 ## Features
 
 - WPA2 access point: `cam-rover` (default password: `camrover`)
 - Switch between the robot AP and 2.4 GHz home Wi-Fi using the web page or HTTP API; connection failures fall back to the AP
-- Mobile control page at `http://192.168.71.1`
+- Mobile control page at `http://192.168.71.1` in AP mode, or at the router-assigned IP in STA mode
 - OV2640/OV3660 MJPEG video stream
 - Forward, backward, left/right rotation, four diagonal directions, and stop
 - 20 kHz motor PWM with speed control from 85 to 255; GPIO4 flash LED
@@ -47,18 +47,18 @@ flowchart TD
     J --> I["ESP32 ELF in target/.../release/"]
 ```
 
-The runtime call path is separate from the build process:
+At runtime, movement commands and the safety timeout follow this path:
 
 ```mermaid
 flowchart LR
-    A["Phone: control or video request"] --> B["src/main.rs: HTTP and application logic"]
-    B --> C["esp-idf-svc Rust wrappers"]
-    C --> D["ESP-IDF Wi-Fi and HTTP"]
-    B --> E["src/hardware.rs: Rust wrapper"]
-    E --> F["Generated rover FFI bindings"]
-    F --> G["rover_hardware.c"]
-    G --> H["ESP-IDF GPIO/LEDC and esp32-camera APIs"]
-    H --> I["ESP32 camera, motors, and LED"]
+    A["Web page or Raspberry Pi Go server"] -->|"GET /api/move"| B["Rust HTTP server :80"]
+    B --> C["Parse Motion and update RoverState"]
+    C --> D["src/hardware.rs and generated FFI"]
+    D --> E["rover_hardware.c: LEDC PWM"]
+    E --> F["L298N motors"]
+    G["Safety task: checks every 100 ms"] -.->|"reads last_command"| C
+    G -->|"more than 700 ms without a command"| H["hardware::stop()"]
+    H --> F
 ```
 
 | Operation | C bridge and SDK call | Result |
@@ -68,7 +68,7 @@ flowchart LR
 | Drive motors | `ledc_timer_config`, `ledc_channel_config`, `ledc_set_duty` | Sets 20 kHz PWM on the L298N input pins |
 | Toggle light | `gpio_config`, `gpio_set_level` | Controls GPIO4 flash LED |
 
-Rust uses `esp-idf-svc` directly for Wi-Fi and HTTP. Only the camera, motor PWM, and LED operations go through the local C bridge; captured frame bytes travel back through that bridge to the Rust HTTP stream. Calling C through FFI is a design choice for these existing drivers, not a general requirement of Rust.
+Rust uses `esp-idf-svc` directly for Wi-Fi and HTTP. Only the camera, motor PWM, and LED operations go through the local C bridge; captured frame bytes travel back through that bridge to the separate MJPEG server on port 81. Calling C through FFI is a design choice for these existing drivers, not a general requirement of Rust.
 
 ## Source and dependency locations
 
@@ -79,6 +79,7 @@ Rust uses `esp-idf-svc` directly for Wi-Fi and HTTP. Only the camera, motor PWM,
 | `components_esp32.lock` | Generated ESP-IDF component versions; excluded from Git in this repository |
 | `rust-toolchain.toml`, `.cargo/config.toml` | ESP Xtensa toolchain, target, linker, and flash runner |
 | `src/*.rs` | Rust application, motion logic, and safe wrappers around the C calls |
+| `src/network.rs` | AP/STA startup, NVS settings, and AP recovery when STA connection fails |
 | `src/web/index.html` | Control page embedded in the firmware with `include_str!` |
 | `components/rover_hardware/include/rover_hardware.h` | C declarations used to generate Rust bindings |
 | `components/rover_hardware/rover_hardware.c` | Camera, motor, and LED implementation using SDK headers |
@@ -125,7 +126,7 @@ source "$HOME/.cargo/env"
 source "$HOME/export-esp.sh"
 ```
 
-`espup` installs the ESP-capable Rust toolchain; `ldproxy` links Rust with ESP-IDF; `espflash` writes the result over USB. The initial `cargo build` downloads and prepares the specified ESP-IDF SDK and its C tools. Cargo fetches Rust crates to `~/.cargo/registry/`; the ESP-IDF Component Manager fetches `esp32-camera` and its dependencies into the build output. Later builds reuse what is already present. No manual Arduino IDE or Node.js installation is needed.
+`espup` installs the ESP-capable Rust toolchain; `ldproxy` links Rust with ESP-IDF; `espflash` writes the result over USB. The initial `cargo build` downloads and prepares the specified ESP-IDF SDK and its C tools. Cargo fetches Rust crates to `~/.cargo/registry/`; the ESP-IDF Component Manager fetches `esp32-camera` and its dependencies into the build output. Later builds reuse what is already present. No manual Arduino IDE installation is needed.
 
 If no USB serial port appears, check the USB cable and adapter first. Some CH340-based adapters may need a macOS serial driver.
 
@@ -140,7 +141,7 @@ espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-If the adapter does not automatically enter download mode, hold BOOT and tap RESET, then retry the flash command. After flashing, release BOOT and tap RESET. Connect a phone to `cam-rover` using the default password `camrover`, then open `http://192.168.71.1`.
+If the adapter does not automatically enter download mode, hold BOOT and tap RESET, then retry the flash command. After flashing, release BOOT and tap RESET. On a first boot without saved STA settings, connect a phone to `cam-rover` using the default password `camrover`, then open `http://192.168.71.1`. Flashing normally preserves NVS, so a previously configured board may reconnect to home Wi-Fi instead.
 
 For a combined build, flash, and serial monitor, the repository's Cargo runner also supports:
 
@@ -152,7 +153,28 @@ Here `cargo run` runs the ELF on the **ESP32**, not on the Mac: `.cargo/config.t
 
 ## HTTP control and network mode
 
-The control page offers home Wi-Fi and robot AP buttons. Home Wi-Fi credentials are saved in the ESP32's NVS flash, not compiled into the firmware. Switching stops the motors and reboots the board. Use a 2.4 GHz WPA2-personal network with an 8–63-byte password. Find the assigned IP in the router's DHCP list or USB serial log; a DHCP reservation is useful for a Raspberry Pi server. If connection fails, the robot restores its `cam-rover` AP at `http://192.168.71.1` while keeping the saved credentials.
+The control page offers home Wi-Fi and robot AP buttons. Home Wi-Fi credentials are saved in the ESP32's NVS flash, not compiled into the firmware. The HTTP response is sent first; the motors then stop and the board reboots. Use a 2.4 GHz WPA2-personal network with an 8–63-byte password. Find the assigned IP in the router's DHCP list or USB serial log; a DHCP reservation is useful for a Raspberry Pi server. If connection fails during boot, the robot restores its `cam-rover` AP at `http://192.168.71.1` while keeping the saved credentials.
+
+```mermaid
+flowchart TD
+    A["Web page or HTTP command"] --> B{"Selected mode"}
+    B -->|"Home Wi-Fi"| C["Save SSID and password in NVS<br/>Preferred mode = STA"]
+    B -->|"Robot AP"| D["Save preferred mode = AP"]
+    C --> E["HTTP 202 → stop motors → reboot"]
+    D --> E
+    E --> F{"Preferred mode at boot"}
+    F -->|"AP"| G["Start cam-rover AP<br/>192.168.71.1"]
+    F -->|"STA"| H{"Valid stored credentials?"}
+    H -->|"No"| G
+    H -->|"Yes"| I["Connect to home 2.4 GHz Wi-Fi"]
+    I -->|"Connected + DHCP"| J["Use router-assigned IP"]
+    I -->|"Boot-time connection failure"| K["Stop STA"]
+    K --> G
+    G --> L["GET /api/network<br/>Boot mode = AP; fallback if preferred STA"]
+    J --> M["GET /api/network<br/>Boot mode = STA; assigned IP"]
+```
+
+When the board falls back to AP, its preferred mode remains STA; the next reboot retries the saved network. `GET /api/network` reports the mode/IP established at startup, not a continuous live Wi-Fi health check.
 
 From a Raspberry Pi on the same network, substitute the robot's IP for `ROVER_IP`. Repeat movement commands more often than every 700 ms; the safety timer otherwise stops the motors. Send `stop` when releasing a control.
 
@@ -189,7 +211,7 @@ Set `ROVER_VIDEO_FLIP=0` only if you do **not** want the default vertical flip. 
 ## Safety and troubleshooting
 
 - Raise the wheels for the first motor test. The safety task stops motion 700 ms after the last movement command.
-- The ESP32-CAM uses 2.4 GHz Wi-Fi. The video stream is plain HTTP inside the local AP; do not expose it to the internet with port forwarding.
+- The ESP32-CAM uses 2.4 GHz Wi-Fi. Control and video use plain HTTP in both AP and STA modes; do not expose them to the internet with port forwarding.
 - If the device resets or the camera stream stutters while driving, check battery voltage, the shared ground, and the L298N power wiring.
 - A missing serial port usually indicates a cable, adapter, driver, or permission issue. A flash connection failure may require BOOT + RESET as described above.
 - The first build may take a long time because it downloads and compiles SDK components. Build output appears under `target/`; deleting that directory discards build artifacts, not the source code.

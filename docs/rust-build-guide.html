@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <title>Cam Rover · Rust 빌드와 실행 안내</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;display=swap" rel="stylesheet">
   <style>
     :root {
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -95,6 +96,22 @@
     .runtime strong, .runtime span { display: block; }
     .runtime span { color: var(--muted); font-size: .88rem; margin-top: 5px; }
     .runtime .arrow { border: 0; background: transparent; align-content: center; text-align: center; color: var(--accent); font-weight: 800; padding: 0; }
+    .diagram-intro { max-width: 820px; color: var(--muted); }
+    .diagram-figure { margin: 26px 0 40px; }
+    .diagram-figure figcaption { margin: 0 0 10px; color: var(--muted); }
+    .diagram-figure figcaption strong { display: block; color: var(--ink); font-size: 1.12rem; }
+    .diagram-scroll { width: 100%; max-width: 100%; min-width: 0; overflow-x: auto; background: #f5f5f5; border-radius: 8px; }
+    .diagram-scroll svg { display: block; width: 100%; min-width: 960px; }
+    .diagram-scroll .node-name { fill: #2d3142; font: 600 12px 'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif; }
+    .diagram-scroll .sub { fill: #4f5d75; font: 400 9px 'Geist Mono', ui-monospace, monospace; }
+    .diagram-scroll .tag-text, .diagram-scroll .edge-text, .diagram-scroll .legend-text { font-family: 'Geist Mono', ui-monospace, monospace; }
+    .diagram-scroll .tag-text { font-size: 8px; letter-spacing: .08em; }
+    .diagram-scroll .edge-text { font-size: 8px; letter-spacing: .06em; }
+    .diagram-scroll .legend-text { font-size: 9px; }
+    .diagram-note { margin-top: 10px; max-width: 820px; color: var(--muted); font-size: .94rem; }
+    .diagram-embed { display: block; width: 100%; height: 940px; border: 1px solid var(--line); border-radius: 8px; background: #f5f5f5; }
+    @media (max-width: 590px) { .diagram-embed { height: 1040px; } }
+    @media print { .diagram-scroll { overflow-x: visible; } .diagram-scroll svg { min-width: 0; } }
     details { border-top: 1px solid var(--line); padding: 14px 0; }
     details:first-child { border-top: 0; }
     summary { cursor: pointer; font-weight: 700; }
@@ -128,7 +145,7 @@
     <div class="wrap">
       <div class="brand">CAM ROVER <span aria-hidden="true">/</span> 개발 안내</div>
       <nav aria-label="문서 목차">
-        <a href="#flow">전체 흐름</a><a href="#folders">폴더</a><a href="#tools">설치 도구</a><a href="#commands">CLI 명령</a><a href="#runtime">보드 실행</a>
+        <a href="#flow">전체 흐름</a><a href="#folders">폴더</a><a href="#tools">설치 도구</a><a href="#commands">CLI 명령</a><a href="#runtime">보드 실행</a><a href="#diagrams">구조 다이어그램</a>
       </nav>
     </div>
   </header>
@@ -136,11 +153,11 @@
     <section class="hero" aria-labelledby="page-title">
       <p class="eyebrow">Rust on ESP32-CAM</p>
       <h1 id="page-title">소스에서 로봇까지,<br>무엇이 어디서 실행될까?</h1>
-      <p class="lead">이 프로젝트는 Mac에서 Rust와 ESP-IDF로 펌웨어를 빌드하고, 결과를 ESP32-CAM에 기록합니다. 로봇을 움직이는 프로그램은 Mac의 Node.js가 아니라 ESP32 칩에서 실행됩니다.</p>
+      <p class="lead">이 프로젝트는 Mac에서 Rust와 ESP-IDF로 펌웨어를 빌드하고, 결과를 ESP32-CAM에 기록합니다. 로봇을 움직이는 프로그램은 ESP32 칩에서 실행됩니다.</p>
       <div class="hero-answers" aria-label="핵심 답변">
         <div class="answer"><strong>.embuild</strong> = ESP-IDF 빌드 도구와 SDK</div>
-        <div class="answer"><strong>target</strong> = 컴파일된 펌웨어</div>
-        <div class="answer"><strong>Node.js</strong> = 빌드에 불필요</div>
+        <div class="answer"><strong>target</strong> = 중간 결과와 펌웨어</div>
+        <div class="answer"><strong>NVS</strong> = 집 Wi-Fi 설정 저장</div>
       </div>
     </section>
 
@@ -167,6 +184,7 @@
         <div class="card panel"><span class="tag green">사람이 수정</span><h3>소스와 설정</h3>
           <dl class="file-list">
             <dt><a href="../src/main.rs"><code>src/*.rs</code></a></dt><dd>Wi-Fi, 웹 서버, 안전 정지, 방향 계산 등 Rust 앱 로직.</dd>
+            <dt><a href="../src/network.rs"><code>src/network.rs</code></a></dt><dd>AP/STA 시작, 집 Wi-Fi 접속 정보 검증·NVS 저장, 접속 실패 시 AP 복구.</dd>
             <dt><a href="../components/rover_hardware/rover_hardware.c"><code>components/*.c</code></a></dt><dd>카메라 초기화와 모터 PWM을 ESP-IDF API로 연결.</dd>
             <dt><a href="../components/rover_hardware/include/rover_hardware.h"><code>*.h</code></a></dt><dd>C 함수 선언. Rust 바인딩을 만드는 입력이기도 함.</dd>
             <dt><a href="../components/rover_hardware/CMakeLists.txt"><code>CMakeLists.txt</code></a></dt><dd>C 소스와 ESP-IDF 부품 의존성을 지정하는 빌드 설정 파일.</dd>
@@ -197,7 +215,6 @@
           <li><strong>espflash</strong> — USB 직렬 포트를 통해 ESP32에 기록.</li>
         </ul></div>
         <div class="card panel"><h3>직접 설치할 필요 없음</h3><ul>
-          <li><strong>Node.js / npm</strong> — 현재 펌웨어와 내장 웹 화면은 번들러 없이 빌드됩니다.</li>
           <li><strong>Arduino IDE</strong> — 이 프로젝트는 Cargo와 ESP-IDF를 사용합니다.</li>
           <li><strong>ESP-IDF SDK · Python 가상환경 · C 도구</strong> — 첫 빌드 때 <code>.embuild/</code> 아래로 자동 준비됩니다.</li>
           <li><strong>CH340 드라이버</strong> — USB 직렬 포트가 나타나지 않을 때만 확인합니다.</li>
@@ -246,14 +263,143 @@ espflash save-image --chip esp32 --merge \
         <div><strong>Mac</strong><span>Cargo + Rust + ESP-IDF로 빌드</span></div><div class="arrow" aria-hidden="true">→</div>
         <div><strong>USB</strong><span>espflash가 펌웨어 기록</span></div><div class="arrow" aria-hidden="true">→</div>
         <div><strong>ESP32 플래시</strong><span>전원이 꺼져도 펌웨어 유지</span></div><div class="arrow" aria-hidden="true">→</div>
-        <div><strong>ESP32 실행</strong><span>Wi-Fi AP · 카메라 · 모터</span></div>
+        <div><strong>ESP32 실행</strong><span>Wi-Fi AP/STA · 카메라 · 모터</span></div>
+      </div>
+    </section>
+
+    <section id="diagrams" aria-labelledby="diagrams-title">
+      <h2 id="diagrams-title">보드 내부의 세 가지 핵심 흐름</h2>
+      <p class="diagram-intro">아래 그림은 현재 펌웨어 구현을 기준으로 합니다. 휴대폰에서는 그림 안쪽을 가로로 스크롤할 수 있습니다. 주황색은 각 그림에서 가장 중요한 상태나 경로만 강조합니다.</p>
+
+      <figure class="diagram-figure">
+        <figcaption><strong>1. Wi-Fi AP ↔ 집 Wi-Fi(STA) 전환</strong>웹 화면이나 HTTP 명령이 선호 모드를 NVS에 기록하면 응답 후 재부팅합니다.</figcaption>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wifi-mode-title wifi-mode-desc">
+            <title id="wifi-mode-title">Cam Rover Wi-Fi AP와 STA 상태 전환</title>
+            <desc id="wifi-mode-desc">AP에서 설정 명령을 받으면 재부팅해 집 Wi-Fi 연결을 시도한다. DHCP 연결에 성공하면 STA로 작동하고 실패하면 저장된 설정을 유지한 채 AP로 복구한다. STA에서도 AP 전환 명령으로 재부팅할 수 있다.</desc>
+            <defs>
+              <marker id="wifi-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+              <marker id="wifi-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+              <marker id="wifi-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+            </defs>
+            <rect width="960" height="600" fill="#f5f5f5"/>
+            <path d="M224 256 H304" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#wifi-arrow-link)"/>
+            <path d="M464 256 H544" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-arrow)"/>
+            <path d="M704 256 H784" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-arrow)"/>
+            <path d="M624 296 V400" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#wifi-arrow-accent)"/>
+            <path d="M384 296 V352 Q384 360 376 360 H152 Q144 360 144 352 V296" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-arrow)"/>
+            <path d="M544 440 H40 Q32 440 32 432 V264 Q32 256 40 256 H64" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-arrow)"/>
+            <path d="M848 216 V136 Q848 128 840 128 H392 Q384 128 384 136 V216" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#wifi-arrow-link)"/>
+            <rect x="232" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="264" y="246" text-anchor="middle" fill="#2e5aa8">POST STA</text>
+            <rect x="472" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="504" y="246" text-anchor="middle" fill="#4f5d75">BOOT STA</text>
+            <rect x="712" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="744" y="246" text-anchor="middle" fill="#4f5d75">DHCP OK</text>
+            <rect x="632" y="340" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="668" y="350" text-anchor="middle" fill="#eb6c36">TIMEOUT</text>
+            <rect x="248" y="340" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="280" y="350" text-anchor="middle" fill="#4f5d75">BOOT AP</text>
+            <rect x="248" y="420" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="284" y="430" text-anchor="middle" fill="#4f5d75">FALLBACK</text>
+            <rect x="592" y="108" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="628" y="118" text-anchor="middle" fill="#2e5aa8">POST AP</text>
+            <rect x="64" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="72" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="96" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="144" y="263" text-anchor="middle">로봇 AP</text><text class="sub" x="144" y="280" text-anchor="middle">192.168.71.1</text>
+            <rect x="304" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="312" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="336" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="384" y="263" text-anchor="middle">재부팅</text><text class="sub" x="384" y="280" text-anchor="middle">NVS mode read</text>
+            <rect x="544" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="552" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="576" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="624" y="263" text-anchor="middle">집 Wi-Fi 접속 중</text><text class="sub" x="624" y="280" text-anchor="middle">2.4 GHz · WPA2</text>
+            <rect x="784" y="216" width="128" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="792" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="816" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="848" y="263" text-anchor="middle">STA 연결</text><text class="sub" x="848" y="280" text-anchor="middle">DHCP IP</text>
+            <rect x="544" y="400" width="160" height="80" rx="8" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="552" y="408" width="60" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="582" y="417" text-anchor="middle" fill="#eb6c36">RECOVER</text><text class="node-name" x="624" y="447" text-anchor="middle">AP 복구</text><text class="sub" x="624" y="464" text-anchor="middle">STA settings kept</text>
+            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">STATE = active Wi-Fi mode</text><text class="legend-text" x="376" y="544" fill="#eb6c36">ACCENT = recovery entry</text><text class="legend-text" x="704" y="544" fill="#2e5aa8">BLUE = HTTP request</text>
+          </svg>
+        </div>
+        <p class="diagram-note">저장된 설정이 없으면 AP로 시작합니다. <code>POST /api/network</code>가 <code>mode</code>와 (STA 선택 시) SSID·암호를 NVS에 저장한 뒤 HTTP 202를 반환합니다. 이후 재시작해 STA 연결을 시도하며, 실패하면 AP로 복구합니다. 저장된 선호 모드가 STA이므로 다음 재부팅에도 다시 접속을 시도합니다.</p>
+      </figure>
+
+      <figure class="diagram-figure">
+        <figcaption><strong>1.1 AP → 집 Wi-Fi 전환 단계별 설명</strong>이전·다음 버튼으로 상태를 넘기거나 재생 버튼으로 전체 흐름을 볼 수 있습니다. 성공과 실패는 순서가 아니라 접속 시도의 두 가지 결과입니다.</figcaption>
+        <iframe class="diagram-embed" src="wifi-ap-sta-step.html" title="AP에서 집 Wi-Fi 접속 시도 후 성공 또는 AP 복구를 보여주는 단계별 도식" loading="lazy"></iframe>
+        <p class="diagram-note">JavaScript가 꺼져 있어도 도식 전체는 보입니다. 접속에 실패하면 실제 AP 모드로 복구되지만 NVS에 저장한 STA 선호 모드는 유지되어 다음 재부팅에서 다시 시도합니다. <a href="wifi-ap-sta-step.html">단계별 도식만 별도로 열기</a></p>
+      </figure>
+
+      <figure class="diagram-figure">
+        <figcaption><strong>2. HTTP 명령이 모터와 Wi-Fi 설정에 도달하는 경로</strong>웹 화면과 라즈베리 파이 Go 서버는 같은 HTTP API를 사용할 수 있습니다.</figcaption>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="http-path-title http-path-desc">
+            <title id="http-path-title">Cam Rover HTTP 제어 아키텍처</title>
+            <desc id="http-path-desc">휴대폰 웹 화면 또는 라즈베리 파이 서버가 ESP32 HTTP API에 요청한다. 이동 명령은 Rust 이동 판단과 안전 정지를 거쳐 모터로 전달되고, 네트워크 설정 명령은 NVS에 기록된 뒤 재부팅되어 AP 또는 STA를 시작한다.</desc>
+            <defs>
+              <marker id="http-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+              <marker id="http-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
+              <marker id="http-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+            </defs>
+            <rect width="960" height="600" fill="#f5f5f5"/>
+            <path d="M216 272 H288" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#http-arrow-link)"/>
+            <path d="M448 256 H480 Q488 256 488 248 V192 Q488 184 496 184 H528" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#http-arrow-accent)"/>
+            <path d="M688 184 H768" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#http-arrow)"/>
+            <path d="M384 304 V376 Q384 384 392 384 H528" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#http-arrow)"/>
+            <path d="M688 384 H768" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#http-arrow)"/>
+            <rect x="220" y="252" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="252" y="262" text-anchor="middle" fill="#2e5aa8">HTTP</text>
+            <rect x="452" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="484" y="246" text-anchor="middle" fill="#eb6c36">MOVE</text>
+            <rect x="696" y="164" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="728" y="174" text-anchor="middle" fill="#4f5d75">PWM</text>
+            <rect x="416" y="364" width="80" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="456" y="374" text-anchor="middle" fill="#4f5d75">NETWORK</text>
+            <rect x="696" y="364" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="728" y="374" text-anchor="middle" fill="#4f5d75">REBOOT</text>
+            <rect x="56" y="240" width="160" height="64" rx="6" fill="rgba(79,93,117,.1)" stroke="#7a8399"/><rect x="64" y="248" width="48" height="12" rx="2" fill="none" stroke="#7a8399"/><text class="tag-text" x="88" y="257" text-anchor="middle" fill="#4f5d75">CLIENT</text><text class="node-name" x="136" y="275" text-anchor="middle">웹 · Go 서버</text><text class="sub" x="136" y="292" text-anchor="middle">same LAN</text>
+            <rect x="288" y="240" width="160" height="64" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="296" y="248" width="48" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="320" y="257" text-anchor="middle" fill="#eb6c36">API</text><text class="node-name" x="368" y="275" text-anchor="middle">Rust HTTP 서버</text><text class="sub" x="368" y="292" text-anchor="middle">port 80</text>
+            <rect x="528" y="152" width="160" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="536" y="160" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="560" y="169" text-anchor="middle" fill="#4f5d75">LOGIC</text><text class="node-name" x="608" y="187" text-anchor="middle">이동·안전 정지</text><text class="sub" x="608" y="204" text-anchor="middle">700 ms watchdog</text>
+            <rect x="768" y="152" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="776" y="160" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="800" y="169" text-anchor="middle" fill="#4f5d75">OUTPUT</text><text class="node-name" x="840" y="187" text-anchor="middle">모터 제어</text><text class="sub" x="840" y="204" text-anchor="middle">C LEDC bridge</text>
+            <rect x="528" y="352" width="160" height="64" rx="6" fill="rgba(45,49,66,.05)" stroke="#4f5d75"/><rect x="536" y="360" width="48" height="12" rx="2" fill="none" stroke="#4f5d75"/><text class="tag-text" x="560" y="369" text-anchor="middle" fill="#4f5d75">STORE</text><text class="node-name" x="608" y="387" text-anchor="middle">NVS 설정</text><text class="sub" x="608" y="404" text-anchor="middle">mode · SSID · password</text>
+            <rect x="768" y="352" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="776" y="360" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="800" y="369" text-anchor="middle" fill="#4f5d75">RADIO</text><text class="node-name" x="840" y="387" text-anchor="middle">AP 또는 STA</text><text class="sub" x="840" y="404" text-anchor="middle">esp-idf-svc</text>
+            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">TOP = movement path</text><text class="legend-text" x="376" y="544" fill="#4f5d75">BOTTOM = persisted network mode</text><text class="legend-text" x="744" y="544" fill="#2e5aa8">BLUE = HTTP</text>
+          </svg>
+        </div>
+        <p class="diagram-note"><code>GET /api/move?direction=...</code>는 주행을 갱신하며 700ms 동안 새 이동 명령이 없으면 멈춥니다. <code>POST /api/network</code>는 모드와 접속 정보를 저장한 뒤 HTTP 202를 보내고 재부팅합니다. 영상은 별도 HTTP 서버의 <code>:81/stream</code>에서 제공합니다. API와 영상은 인증·암호화가 없으므로 신뢰할 수 있는 내부망에서만 사용하세요.</p>
+      </figure>
+
+      <figure class="diagram-figure">
+        <figcaption><strong>3. Rust와 C 드라이버를 하나의 펌웨어로 빌드</strong><code>CMakeLists.txt</code>의 컴포넌트 의존성이 SDK 헤더와 라이브러리를 C 빌드에 연결합니다.</figcaption>
+        <div class="diagram-scroll">
+          <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bridge-build-title bridge-build-desc">
+            <title id="bridge-build-title">Cam Rover Rust와 C 드라이버의 빌드 경로</title>
+            <desc id="bridge-build-desc">Cargo와 esp-idf-sys가 ESP-IDF 컴포넌트 빌드를 시작한다. CMakeLists가 ESP-IDF와 카메라 헤더 및 라이브러리를 연결하고 C 소스를 컴파일한다. 헤더에서 Rust FFI 바인딩도 생성해 C 결과와 Rust 코드를 ELF 펌웨어로 링크한다.</desc>
+            <defs>
+              <marker id="build-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+              <marker id="build-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+            </defs>
+            <rect width="960" height="600" fill="#f5f5f5"/>
+            <path d="M208 280 H280" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#build-arrow)"/>
+            <path d="M512 152 H408 Q400 152 400 160 V240" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#build-arrow)"/>
+            <path d="M440 280 H744" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#build-arrow)"/>
+            <path d="M360 320 V392 Q360 400 368 400 H512" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#build-arrow)"/>
+            <path d="M672 400 H816 Q824 400 824 392 V320" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#build-arrow)"/>
+            <path d="M128 240 V88 Q128 80 136 80 H816 Q824 80 824 88 V240" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#build-arrow-accent)"/>
+            <rect x="212" y="260" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="244" y="270" text-anchor="middle" fill="#4f5d75">REGISTER</text>
+            <rect x="408" y="188" width="56" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="436" y="198" text-anchor="middle" fill="#4f5d75">INCLUDE</text>
+            <rect x="544" y="260" width="96" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="592" y="270" text-anchor="middle" fill="#4f5d75">C OBJECT</text>
+            <rect x="408" y="380" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="440" y="390" text-anchor="middle" fill="#4f5d75">BINDGEN</text>
+            <rect x="704" y="380" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="740" y="390" text-anchor="middle" fill="#4f5d75">RUST FFI</text>
+            <rect x="432" y="60" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="468" y="70" text-anchor="middle" fill="#eb6c36">RUST CODE</text>
+            <rect x="48" y="240" width="160" height="80" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="56" y="248" width="48" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="80" y="257" text-anchor="middle" fill="#eb6c36">BUILD</text><text class="node-name" x="128" y="287" text-anchor="middle">Cargo · Rust</text><text class="sub" x="128" y="304" text-anchor="middle">esp-idf-sys</text>
+            <rect x="280" y="240" width="160" height="80" rx="6" fill="#fff" stroke="#2d3142"/><rect x="288" y="248" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="312" y="257" text-anchor="middle" fill="#4f5d75">C PART</text><text class="node-name" x="360" y="287" text-anchor="middle">CMake + C/.h</text><text class="sub" x="360" y="304" text-anchor="middle">rover_hardware</text>
+            <rect x="512" y="120" width="160" height="64" rx="6" fill="rgba(45,49,66,.03)" stroke="#7a8399"/><rect x="520" y="128" width="48" height="12" rx="2" fill="none" stroke="#7a8399"/><text class="tag-text" x="544" y="137" text-anchor="middle" fill="#4f5d75">SDK</text><text class="node-name" x="592" y="155" text-anchor="middle">ESP-IDF · 카메라</text><text class="sub" x="592" y="172" text-anchor="middle">headers + libraries</text>
+            <rect x="512" y="368" width="160" height="64" rx="6" fill="rgba(45,49,66,.05)" stroke="#4f5d75"/><rect x="520" y="376" width="48" height="12" rx="2" fill="none" stroke="#4f5d75"/><text class="tag-text" x="544" y="385" text-anchor="middle" fill="#4f5d75">FFI</text><text class="node-name" x="592" y="403" text-anchor="middle">Rust 바인딩</text><text class="sub" x="592" y="420" text-anchor="middle">from .h declarations</text>
+            <rect x="744" y="240" width="160" height="80" rx="6" fill="#fff" stroke="#2d3142"/><rect x="752" y="248" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="776" y="257" text-anchor="middle" fill="#4f5d75">OUTPUT</text><text class="node-name" x="824" y="287" text-anchor="middle">ESP32 ELF</text><text class="sub" x="824" y="304" text-anchor="middle">target/.../release</text>
+            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#eb6c36">ACCENT = Cargo-controlled build</text><text class="legend-text" x="424" y="544" fill="#4f5d75">C object + Rust bindings + Rust code → ELF</text>
+          </svg>
+        </div>
+        <p class="diagram-note"><code>CMakeLists.txt</code>의 <code>REQUIRES esp32-camera driver esp_psram</code>는 C 컴파일 단계에서 필요한 컴포넌트를 선언합니다. <code>#include</code>는 선언을 읽고, <code>.h</code>는 Rust FFI 생성에도 쓰입니다. Wi-Fi·HTTP는 C 브리지를 통하지 않고 <code>src/main.rs</code>와 <code>src/network.rs</code>가 <code>esp-idf-svc</code>를 직접 호출합니다.</p>
+      </figure>
+      <div class="card panel">
+        <h3>라즈베리 파이에서 보내는 HTTP 명령 예시</h3>
+        <p>집 Wi-Fi 연결 후 공유기 DHCP 목록 또는 USB 직렬 로그에서 로봇 IP를 확인하세요. <code>ROVER_IP</code>를 해당 주소로 바꾸면 됩니다. 이동 명령은 700ms보다 자주 반복하고 버튼을 놓을 때 정지를 보내세요.</p>
+        <pre><code>curl "http://ROVER_IP/api/move?direction=forward"
+curl "http://ROVER_IP/api/move?direction=stop"
+curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"ap"}'</code></pre>
+        <p>모드 변경 요청은 HTTP 202를 반환한 뒤 보드를 재부팅하므로 기존 IP 연결이 끊깁니다. <code>GET /api/network</code>는 현재 모드·IP·복구 여부를 반환하며 암호는 반환하지 않습니다. 집 Wi-Fi 접속 실패 시 <code>cam-rover</code>에 연결해 <code>http://192.168.71.1</code>에서 다시 설정할 수 있습니다.</p>
       </div>
     </section>
 
     <section id="faq" aria-labelledby="faq-title"><h2 id="faq-title">헷갈리기 쉬운 점</h2><div class="card panel">
       <details><summary><code>.cargo</code>와 <code>~/.cargo</code>는 같은 곳인가요?</summary><p>아니요. 프로젝트의 <code>.cargo/config.toml</code>은 이 펌웨어의 타깃 설정입니다. 사용자 홈의 <code>~/.cargo/bin</code>에는 Cargo와 espflash 같은 실행 도구가 설치됩니다.</p></details>
       <details><summary><code>cargo run</code>은 Mac에서 로봇 프로그램을 실행하나요?</summary><p>아니요. 이 프로젝트의 실행 대상은 <code>xtensa-esp32-espidf</code>이고, 설정된 runner는 <code>espflash flash --monitor</code>입니다. 따라서 실행 단계는 보드 업로드와 직렬 모니터로 이어집니다.</p></details>
-      <details><summary>HTML 화면에 Node.js가 없어도 되나요?</summary><p>네. <code>src/web/index.html</code>은 Rust의 <code>include_str!</code>로 펌웨어에 포함됩니다. npm 설치나 프런트엔드 빌드가 없습니다.</p></details>
+      <details><summary>웹 조종 화면은 어디에 저장되나요?</summary><p><code>src/web/index.html</code>은 Rust의 <code>include_str!</code>로 펌웨어에 포함됩니다. 보드의 HTTP 서버가 이를 휴대폰 브라우저로 전송합니다.</p></details>
+      <details><summary>집 Wi-Fi 접속이 실패하면 조종할 수 없나요?</summary><p>연결 실패 시 로봇은 <code>cam-rover</code> AP를 다시 만듭니다. 휴대폰을 그 AP에 연결하고 <code>http://192.168.71.1</code>을 열어 SSID와 암호를 다시 설정하세요. 연결 정보는 NVS에 남아 있으며, 선호 모드가 STA라면 다음 재부팅 때도 접속을 다시 시도합니다.</p></details>
       <details><summary>카메라 드라이버가 C이면 Rust 프로젝트가 아닌가요?</summary><p>프로그램의 제어 흐름은 Rust에 있습니다. 카메라와 모터의 저수준 하드웨어 호출만 ESP-IDF C API를 통해 연결합니다. Rust 코드가 C 함수를 호출하도록 <code>.h</code> 선언에서 바인딩이 생성됩니다.</p></details>
     </div></section>
   </main>
@@ -266,7 +412,7 @@ espflash save-image --chip esp32 --merge \
         ['ESP-IDF가 하드웨어 부분을 빌드', 'esp-idf-sys가 .embuild/에 SDK와 컴파일 도구를 준비하고, esp32-camera와 rover_hardware C 코드를 함께 컴파일합니다.'],
         ['ESP32용 실행 파일 생성', 'Rust 코드와 C 라이브러리를 링크해 target/xtensa-esp32-espidf/release/cam-rover-esp32 ELF를 만듭니다. 이 파일은 Mac 프로그램이 아닙니다.'],
         ['USB로 기록', 'espflash flash가 ELF의 앱, 부트로더, 파티션 정보를 ESP32 플래시에 씁니다. .bin 통합 이미지는 필요할 때 별도로 만들 수 있습니다.'],
-        ['로봇에서 실행', 'ESP32를 재부팅하면 카메라, Wi-Fi AP, 웹 조종 화면과 모터 제어가 보드에서 실행됩니다. Mac이나 Node.js를 계속 켜둘 필요가 없습니다.']
+        ['로봇에서 실행', 'ESP32를 재부팅하면 카메라, Wi-Fi AP 또는 STA, 웹 조종 화면과 모터 제어가 보드에서 실행됩니다. Mac을 계속 켜둘 필요가 없습니다.']
       ];
       const steps = [...document.querySelectorAll('.flow-step')];
       const detail = document.getElementById('flow-detail');

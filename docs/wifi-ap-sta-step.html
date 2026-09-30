@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cam Rover · AP에서 집 Wi-Fi 전환 단계</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Serif:ital@0;1&family=Noto+Sans+KR:wght@400;500;600&family=Noto+Serif+KR:wght@400&family=Noto+Sans+TC:wght@400;500;600&family=Noto+Serif+TC:wght@400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --color-paper: #f5f5f5;
+      --color-ink: #2d3142;
+      --color-muted: #4f5d75;
+      --color-soft: #7a8399;
+      --color-accent: #eb6c36;
+      --color-rule: rgba(45,49,66,0.12);
+      --font-sans: 'Geist', system-ui, sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif', 'Noto Serif KR', serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace;
+      --motion-fast: 160ms;
+      --motion-step: 480ms;
+      --motion-hold: 720ms;
+      --motion-total: 3600ms;
+      --motion-ease: cubic-bezier(.2,.8,.2,1);
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 48px 32px;
+      color: var(--color-ink);
+      background: var(--color-paper);
+      font-family: var(--font-sans);
+    }
+    [data-motion-root] { width: min(100%, 1000px); }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0 0 24px; font: 400 32px/1.15 var(--font-serif); }
+    svg { display: block; width: 100%; min-width: 960px; }
+    /* The SVG holds its readable width (min-width == the viewBox width, so the
+       type ramp is never silently scaled down). This wrapper lets a narrow
+       screen scroll the diagram instead of the whole page. body is a centred
+       grid, so the root needs max-width/min-width to stop the grid item from
+       sizing itself to the SVG's max-content width. */
+    [data-motion-root] { max-width: 100%; min-width: 0; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+
+    /* Static source is complete. Only an initialized enhancement hides items. */
+    .motion-ready [data-motion-item] {
+      opacity: .3;
+      transform: translateY(8px);
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: opacity var(--motion-step) var(--motion-ease),
+                  transform var(--motion-step) var(--motion-ease);
+    }
+    .motion-ready [data-motion-item].is-visible,
+    .motion-ready[data-frame="end"] [data-motion-item],
+    .motion-ready[data-frame="static"] [data-motion-item] {
+      opacity: 1;
+      transform: none;
+    }
+    .draw-path {
+      fill: none;
+      stroke: var(--color-accent);
+      stroke-width: 3;
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+      pointer-events: none;
+    }
+    .motion-ready .draw-path.is-visible {
+      animation: draw-path var(--motion-step) linear forwards;
+    }
+    .flow-token { opacity: 0; pointer-events: none; }
+    .motion-ready.is-playing .flow-token.is-visible {
+      opacity: 1;
+      animation: token-flow 3.2s linear 1 forwards;
+    }
+    .motion-ready[data-motion-mode="loop"].is-playing .flow-token.is-visible {
+      animation-iteration-count: infinite;
+    }
+    @keyframes draw-path { to { stroke-dashoffset: 0; } }
+    @keyframes token-flow {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(240px); }
+    }
+
+    [data-motion-controls] {
+      display: none;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--color-rule);
+    }
+    .motion-ready [data-motion-controls] { display: flex; }
+    [data-motion-controls][hidden] { display: none !important; }
+    [data-motion-controls] button {
+      min-width: 44px;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: 1px solid var(--color-muted);
+      border-radius: 4px;
+      color: var(--color-ink);
+      background: var(--color-paper);
+      font: 600 12px/1 var(--font-sans);
+      cursor: pointer;
+    }
+    [data-motion-controls] button:hover { border-color: var(--color-accent); }
+    [data-motion-controls] button:focus-visible {
+      outline: 3px solid var(--color-accent);
+      outline-offset: 2px;
+    }
+    [data-motion-controls] button:disabled { cursor: not-allowed; opacity: .45; }
+    [data-motion-status-visible] {
+      margin-left: auto;
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0,0,0,0);
+      white-space: nowrap;
+      border: 0;
+    }
+    noscript p {
+      margin: 12px 0 0;
+      color: var(--color-muted);
+      font: 500 12px/1.4 var(--font-mono);
+    }
+
+    html[data-motion="static"] [data-motion-controls],
+    html[data-motion="static"] [data-motion-decorative] { display: none !important; }
+    html[data-motion="static"] [data-motion-item] {
+      opacity: 1 !important;
+      transform: none !important;
+      animation: none !important;
+      transition: none !important;
+    }
+    html[data-motion="step"] [data-motion-controls],
+    html[data-motion="step"] [data-motion-decorative] { display: none !important; }
+    html[data-motion="step"] [data-motion-item] {
+      animation: none !important;
+      transition: none !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: .001ms !important;
+      }
+      [data-motion-item] { opacity: 1 !important; transform: none !important; }
+      [data-motion-decorative] { display: none !important; }
+      [data-motion-controls] { display: none !important; }
+    }
+    @media print {
+      /* Paper has no scrollbar, so the local scroller would clip instead of
+         scroll. Let the diagram scale down to the sheet: smaller but whole
+         beats sharp but cut off. */
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+      [data-motion-controls], [data-motion-decorative] { display: none !important; }
+      [data-motion-item] {
+        opacity: 1 !important;
+        transform: none !important;
+        animation: none !important;
+        transition: none !important;
+      }
+    }
+    .intro { margin: -10px 0 18px; color: var(--color-muted); font-size: 14px; line-height: 1.6; }
+    .keyboard-help { color: var(--color-soft); font-size: 11px; }
+    .footnote { margin: 12px 0 0; color: var(--color-muted); font-size: 13px; line-height: 1.55; }
+    body { min-height: 0; padding: 20px 12px; align-items: start; justify-items: center; }
+    h1 { font-family: 'Instrument Serif', 'Noto Serif KR', serif; font-size: 28px; margin-bottom: 18px; }
+    @media (max-width: 640px) { [data-motion-status-visible] { width: 100%; margin-left: 0; } }
+  </style>
+</head>
+<body>
+  <main data-motion-root data-motion-mode="step" data-step-count="6" data-step-current="6" data-frame="static" data-static-frame="complete">
+    <p class="eyebrow">1.1 · WI-FI MODE SWITCH</p>
+    <h1>AP에서 집 Wi-Fi로 전환할 때</h1>
+    <p class="intro">위쪽은 설정·재부팅·접속 시도의 순서입니다. 아래 성공과 실패는 서로 다른 결과이며, 실패하면 로봇 AP가 다시 켜집니다.</p>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wifi-ap-sta-step-title wifi-ap-sta-step-desc">
+        <title id="wifi-ap-sta-step-title">Cam Rover AP에서 집 Wi-Fi로 전환</title>
+        <desc id="wifi-ap-sta-step-desc">로봇 AP에서 STA 접속 정보를 저장하고 재부팅해 집 2.4GHz Wi-Fi에 연결을 시도한다. DHCP 성공 시 STA로 동작하고, 실패 시 STA를 중지한 뒤 AP로 복구한다. 복구 후에도 저장된 STA 선호 모드는 유지된다.</desc>
+        <defs>
+          <marker id="wifi-ap-sta-step-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#4f5d75"/>
+          </marker>
+          <marker id="wifi-ap-sta-step-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#eb6c36"/>
+          </marker>
+          <marker id="wifi-ap-sta-step-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#2e5aa8"/>
+          </marker>
+        </defs>
+        <rect width="960" height="600" fill="#f5f5f5"/>
+        <text x="40" y="136" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8" letter-spacing=".14em">SETUP → BOOT</text>
+        <text x="456" y="388" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8" letter-spacing=".14em">ALTERNATIVE OUTCOMES</text>
+
+        <!-- Base connectors remain visible in the complete static source. -->
+        <path d="M220 228 H268" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow-link)"/>
+        <path d="M448 228 H496" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow)"/>
+        <path d="M676 228 H720" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow)"/>
+        <path d="M784 276 V344 Q784 352 776 352 H564 Q556 352 556 360 V416" fill="none" stroke="#eb6c36" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow-accent)"/>
+        <path d="M856 276 V344 Q856 352 848 352 H828 Q820 352 820 360 V416" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow)"/>
+        <path d="M456 464 H136 Q128 464 128 456 V276" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-ap-sta-step-arrow)"/>
+
+        <rect x="220" y="208" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="244" y="217" text-anchor="middle" fill="#2e5aa8" font-family="'Geist Mono', monospace" font-size="8">POST STA</text>
+        <rect x="448" y="208" width="48" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="472" y="217" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8">HTTP 202</text>
+        <rect x="676" y="208" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="698" y="217" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8">BOOT STA</text>
+        <rect x="620" y="332" width="92" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="666" y="341" text-anchor="middle" fill="#eb6c36" font-family="'Geist Mono', monospace" font-size="8">FAIL / STOP STA</text>
+        <rect x="864" y="300" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="896" y="309" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8">DHCP OK</text>
+        <rect x="268" y="444" width="64" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="300" y="453" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="8">AP READY</text>
+
+        <g data-motion-item data-step="1" aria-label="로봇 AP에서 시작">
+          <rect x="40" y="180" width="180" height="96" rx="8" fill="#f5f5f5" stroke="#2d3142"/>
+          <text x="130" y="220" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">로봇 AP</text>
+          <text x="130" y="241" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">192.168.71.1</text>
+          <text x="130" y="258" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">cam-rover</text>
+        </g>
+        <g data-motion-item data-step="2" aria-label="SSID와 암호 및 STA 선호 모드를 NVS에 저장">
+          <rect x="268" y="180" width="180" height="96" rx="8" fill="#f5f5f5" stroke="#2d3142"/>
+          <text x="358" y="220" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">STA 설정 저장</text>
+          <text x="358" y="241" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">NVS · SSID / password</text>
+          <text x="358" y="258" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">preferred = STA</text>
+        </g>
+        <g data-motion-item data-step="3" aria-label="HTTP 202 응답 이후 모터를 멈추고 재시작">
+          <rect x="496" y="180" width="180" height="96" rx="8" fill="#f5f5f5" stroke="#2d3142"/>
+          <text x="586" y="220" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">모터 정지 · 재시작</text>
+          <text x="586" y="246" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">esp_restart()</text>
+        </g>
+        <g data-motion-item data-step="4" aria-label="부팅하며 집 2.4GHz Wi-Fi에 접속 시도">
+          <rect x="720" y="180" width="200" height="96" rx="8" fill="#f5f5f5" stroke="#2d3142"/>
+          <text x="820" y="220" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">집 Wi-Fi 접속 시도</text>
+          <text x="820" y="246" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">2.4 GHz · DHCP</text>
+        </g>
+        <g data-motion-item data-step="5" aria-label="성공 경로: 공유기에서 IP를 받아 STA로 동작">
+          <rect x="720" y="416" width="200" height="96" rx="8" fill="#f5f5f5" stroke="#2d3142"/>
+          <text x="820" y="454" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">성공: STA 연결</text>
+          <text x="820" y="479" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">router-assigned IP</text>
+        </g>
+        <g data-motion-item data-step="6" aria-label="실패 경로: STA를 중지하고 AP로 복구, 선호 모드는 유지">
+          <rect x="456" y="416" width="200" height="96" rx="8" fill="rgba(235,108,54,0.08)" stroke="#eb6c36"/>
+          <text x="556" y="454" text-anchor="middle" fill="#2d3142" font-family="'Geist', 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif" font-size="12" font-weight="600">실패: AP 복구</text>
+          <text x="556" y="479" text-anchor="middle" fill="#4f5d75" font-family="'Geist Mono', monospace" font-size="9">STA preferred kept</text>
+        </g>
+      </svg>
+    </div>
+
+    <p class="footnote">실패해 AP로 복구해도 저장한 STA 선호 모드와 접속 정보는 유지됩니다. 다음 부팅에서 집 Wi-Fi 접속을 다시 시도합니다.</p>
+
+    <div data-motion-controls role="group" aria-label="Wi-Fi 전환 도식 재생 제어">
+      <button type="button" data-motion-action="prev">이전</button>
+      <button type="button" data-motion-action="play" aria-pressed="false">재생</button>
+      <button type="button" data-motion-action="pause" aria-pressed="true">일시정지</button>
+      <button type="button" data-motion-action="next">다음</button>
+      <button type="button" data-motion-action="replay">처음부터</button>
+      <span class="keyboard-help">←/→ 단계 이동 · Space 재생/정지 · R 처음부터 · Home/End 처음/끝</span>
+      <span data-motion-status-visible aria-hidden="true">단계 <span data-motion-step-label>6</span> / 6</span>
+    </div>
+    <p class="sr-only" data-motion-status role="status" aria-live="polite" aria-atomic="true"></p>
+    <noscript><p>JavaScript 없이도 전체 경로를 볼 수 있습니다. 단계별 재생 버튼만 비활성화됩니다.</p></noscript>
+  </main>
+
+  <script data-diagram-controls>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const staticOverride = params.get('motion') === 'static' || document.documentElement.dataset.motion === 'static';
+      const requestedStep = params.get('step');
+      const reduce = matchMedia('(prefers-reduced-motion: reduce)');
+      document.fonts.ready.then(() => { document.documentElement.dataset.fontsReady = 'true'; });
+
+      document.querySelectorAll('[data-motion-root]').forEach((root) => {
+        const count = Number(root.dataset.stepCount);
+        const hold = parseFloat(getComputedStyle(root).getPropertyValue('--motion-hold')) || 720;
+        const parsedStep = requestedStep !== null && /^\d+$/.test(requestedStep) ? Number(requestedStep) : null;
+        const exactStep = params.get('motion') === 'step' && Number.isSafeInteger(parsedStep) && parsedStep >= 0 && parsedStep <= count ? parsedStep : null;
+        const items = [...root.querySelectorAll('[data-motion-item]')];
+        const labels = Array.from({ length: count + 1 }, (_, index) => index === 0
+          ? 'Ready'
+          : items.filter((item) => !item.hasAttribute('data-motion-decorative') && Number(item.dataset.step) === index)
+              .map((item) => item.getAttribute('aria-label')).join('; '));
+        const controls = root.querySelector('[data-motion-controls]');
+        const status = root.querySelector('[data-motion-status]');
+        const visibleStep = root.querySelector('[data-motion-step-label]');
+        let step = count;
+        let timer = 0;
+        let playing = false;
+        let stepBeforeReduce = 0;
+        let resumeAfterReduce = root.dataset.motionMode === 'reveal';
+
+        const buttons = (action) => controls.querySelector(`[data-motion-action="${action}"]`);
+        const clearClock = () => { window.clearTimeout(timer); timer = 0; };
+        const announce = () => { status.textContent = `Step ${step} of ${count}: ${labels[step] || 'Complete'}`; };
+        const setControlsAvailable = (available) => {
+          controls.hidden = !available;
+          controls.setAttribute('aria-hidden', String(!available));
+          controls.dataset.playbackDisabled = String(!available);
+          controls.querySelectorAll('button').forEach((control) => { control.disabled = !available; });
+        };
+
+        function render(next, userInitiated = false) {
+          step = Math.max(0, Math.min(count, next));
+          root.dataset.stepCurrent = String(step);
+          root.dataset.frame = step === count ? 'end' : step === 0 ? 'start' : 'step';
+          items.forEach((item) => {
+            const itemStep = Number(item.dataset.step);
+            item.classList.toggle('is-visible', itemStep <= step);
+            item.classList.toggle('is-current', itemStep === step);
+          });
+          if (visibleStep) visibleStep.textContent = String(step);
+          const unavailable = controls.dataset.playbackDisabled === 'true';
+          buttons('prev').disabled = unavailable || step === 0;
+          buttons('next').disabled = unavailable || step === count;
+          if (userInitiated) announce();
+        }
+
+        function pause(userInitiated = false) {
+          clearClock();
+          playing = false;
+          root.classList.remove('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'false');
+          buttons('pause').setAttribute('aria-pressed', 'true');
+          if (userInitiated) status.textContent = `Paused at step ${step} of ${count}`;
+        }
+
+        function finish() {
+          pause(false);
+          root.dataset.frame = 'end';
+          status.textContent = `Complete · step ${count} of ${count}`;
+        }
+
+        function tick() {
+          if (!playing) return;
+          if (step >= count) { finish(); return; }
+          render(step + 1, false);
+          if (step >= count) { finish(); return; }
+          timer = window.setTimeout(tick, hold);
+        }
+
+        function play(fromStart = false, userInitiated = false) {
+          clearClock();
+          if (fromStart || step >= count) render(0, userInitiated);
+          playing = true;
+          root.classList.add('is-playing');
+          buttons('play').setAttribute('aria-pressed', 'true');
+          buttons('pause').setAttribute('aria-pressed', 'false');
+          timer = window.setTimeout(tick, hold);
+        }
+
+        controls.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-motion-action]');
+          if (!button) return;
+          const action = button.dataset.motionAction;
+          if (action === 'play') play(false, true);
+          if (action === 'pause') pause(true);
+          if (action === 'replay') play(true, true);
+          if (action === 'prev') { pause(false); render(step - 1, true); }
+          if (action === 'next') { pause(false); render(step + 1, true); }
+        });
+
+        root.addEventListener('keydown', (event) => {
+          if (event.target.matches('input, textarea, select, a[href]')) return;
+          const keys = { ArrowLeft: step - 1, ArrowRight: step + 1, Home: 0, End: count };
+          if (event.code === 'Space' && !event.target.closest('button')) {
+            event.preventDefault();
+            playing ? pause(true) : play(false, true);
+            return;
+          }
+          if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'r') {
+            event.preventDefault();
+            play(true, true);
+            return;
+          }
+          if (!(event.key in keys)) return;
+          event.preventDefault();
+          pause(false);
+          render(keys[event.key], true);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden' && playing) pause(false);
+        });
+        reduce.addEventListener('change', (event) => {
+          if (event.matches && root.dataset.motionState !== 'reduced') {
+            stepBeforeReduce = step;
+            resumeAfterReduce = playing;
+          }
+          pause(false);
+          if (event.matches) {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'reduced';
+            status.textContent = 'Reduced motion · complete static frame · playback controls unavailable';
+          } else if (staticOverride || root.dataset.motionMode === 'none') {
+            setControlsAvailable(false);
+            render(count, false);
+            root.dataset.frame = 'static';
+            root.dataset.motionState = 'static';
+            status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+          } else {
+            delete root.dataset.motionState;
+            if (exactStep !== null) {
+              setControlsAvailable(false);
+              render(exactStep, false);
+              root.dataset.frame = 'step';
+              root.dataset.motionState = 'test';
+              status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+            } else {
+              setControlsAvailable(true);
+              render(stepBeforeReduce, false);
+              status.textContent = `Ready · step ${step} of ${count}`;
+              if (resumeAfterReduce && root.dataset.motionMode === 'reveal') {
+                play(false, false);
+              }
+            }
+            resumeAfterReduce = false;
+          }
+        });
+
+        if (staticOverride) {
+          document.documentElement.dataset.motion = 'static';
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = 'static';
+          status.textContent = 'Static frame · complete diagram · playback controls unavailable';
+        } else if (reduce.matches || root.dataset.motionMode === 'none') {
+          pause(false);
+          setControlsAvailable(false);
+          render(count, false);
+          root.dataset.frame = 'static';
+          root.dataset.motionState = reduce.matches ? 'reduced' : 'static';
+          status.textContent = reduce.matches
+            ? 'Reduced motion · complete static frame · playback controls unavailable'
+            : 'Static frame · complete diagram · playback controls unavailable';
+        } else if (exactStep !== null) {
+          document.documentElement.dataset.motion = 'step';
+          pause(false);
+          setControlsAvailable(false);
+          render(exactStep, false);
+          root.dataset.frame = 'step';
+          root.dataset.motionState = 'test';
+          status.textContent = `Test frame · step ${step} of ${count} · playback controls unavailable`;
+        } else if (root.dataset.motionMode === 'reveal') {
+          setControlsAvailable(true);
+          render(0, false);
+          play(false, false);
+        } else {
+          pause(false);
+          setControlsAvailable(true);
+          render(0, false);
+          status.textContent = `Ready · step 0 of ${count}`;
+        }
+        root.classList.add('motion-ready');
+      });
+    })();
+  </script>
+</body>
+</html>
