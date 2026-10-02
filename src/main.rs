@@ -6,13 +6,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use control::{parse_query, Motion};
+use control::{parse_query, ControlLease, Controller, Motion};
 use embedded_svc::http::Method;
 use embedded_svc::io::Write;
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::http::server::{Configuration as HttpConfiguration, EspHttpServer};
+use esp_idf_svc::mdns::EspMdns;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{error, warn};
@@ -20,12 +21,18 @@ use log::{error, warn};
 const INDEX_HTML: &str = include_str!("web/index.html");
 const STREAM_BOUNDARY: &str = "roverframe";
 const COMMAND_TIMEOUT: Duration = Duration::from_millis(700);
+const API_TOKEN: Option<&str> = option_env!("ROVER_API_TOKEN");
+
+fn authorized(token: Option<&str>) -> bool {
+    API_TOKEN.is_none_or(|expected| token == Some(expected))
+}
 
 #[derive(Debug)]
 struct RoverState {
     speed: u8,
     motion: Motion,
     last_command: Instant,
+    lease: ControlLease,
 }
 
 impl RoverState {
@@ -34,6 +41,7 @@ impl RoverState {
             speed: 170,
             motion: Motion::Stop,
             last_command: Instant::now(),
+            lease: ControlLease::new(),
         }
     }
 
@@ -67,13 +75,18 @@ fn main() -> Result<()> {
     )?;
     let network_manager = network::NetworkManager::new(wifi, nvs)?;
 
+    let mut mdns = EspMdns::take()?;
+    mdns.set_hostname("cam-rover")?;
+    mdns.set_instance_name("Cam Rover")?;
+    mdns.add_service(Some("Cam Rover control"), "_http", "_tcp", 80, &[])?;
+
     let state = Arc::new(Mutex::new(RoverState::new()));
     let control_server = start_control_server(state.clone(), network_manager.clone())?;
     let stream_server = start_stream_server()?;
     start_deadman_switch(state)?;
 
     // These services must stay alive for the entire firmware lifetime.
-    let _services = (network_manager, control_server, stream_server);
+    let _services = (network_manager, mdns, control_server, stream_server);
     loop {
         std::thread::park();
     }
@@ -106,9 +119,34 @@ fn start_control_server(
     server.fn_handler("/api/move", Method::Get, move |request| {
         let motion = parse_query(request.uri(), "direction").and_then(Motion::parse);
         match motion {
-            Some(motion) => {
-                motion_state.lock().unwrap().apply_motion(motion);
+            Some(Motion::Stop) => {
+                let mut state = motion_state.lock().unwrap();
+                state.apply_motion(Motion::Stop);
+                state.lease.release();
+                drop(state);
                 request.into_ok_response()?.write_all(b"ok")?;
+            }
+            Some(_) if !authorized(request.header("X-Rover-Token")) => {
+                request
+                    .into_status_response(401)?
+                    .write_all(b"unauthorized")?;
+            }
+            Some(motion) => {
+                let controller = Controller::parse(request.header("X-Rover-Controller"));
+                let mut state = motion_state.lock().unwrap();
+                let accepted =
+                    controller.is_some_and(|owner| state.lease.claim(owner, COMMAND_TIMEOUT));
+                if accepted {
+                    state.apply_motion(motion);
+                }
+                drop(state);
+                if !accepted {
+                    request
+                        .into_status_response(409)?
+                        .write_all(b"controller busy")?;
+                } else {
+                    request.into_ok_response()?.write_all(b"ok")?;
+                }
             }
             None => {
                 request
@@ -123,9 +161,27 @@ fn start_control_server(
     server.fn_handler("/api/speed", Method::Get, move |request| {
         let speed = parse_query(request.uri(), "value").and_then(|v| v.parse::<u8>().ok());
         match speed {
+            Some(_) if !authorized(request.header("X-Rover-Token")) => {
+                request
+                    .into_status_response(401)?
+                    .write_all(b"unauthorized")?;
+            }
             Some(speed) => {
-                speed_state.lock().unwrap().set_speed(speed);
-                request.into_ok_response()?.write_all(b"ok")?;
+                let controller = Controller::parse(request.header("X-Rover-Controller"));
+                let mut state = speed_state.lock().unwrap();
+                let accepted =
+                    controller.is_some_and(|owner| state.lease.claim(owner, COMMAND_TIMEOUT));
+                if accepted {
+                    state.set_speed(speed);
+                }
+                drop(state);
+                if !accepted {
+                    request
+                        .into_status_response(409)?
+                        .write_all(b"controller busy")?;
+                } else {
+                    request.into_ok_response()?.write_all(b"ok")?;
+                }
             }
             None => {
                 request
@@ -137,6 +193,12 @@ fn start_control_server(
     })?;
 
     server.fn_handler("/api/light", Method::Get, move |request| {
+        if !authorized(request.header("X-Rover-Token")) {
+            request
+                .into_status_response(401)?
+                .write_all(b"unauthorized")?;
+            return Ok::<(), anyhow::Error>(());
+        }
         match parse_query(request.uri(), "on") {
             Some("1") => hardware::set_flash(true),
             Some("0") => hardware::set_flash(false),
@@ -170,6 +232,12 @@ fn start_control_server(
     let scan_manager = network_manager.clone();
     let scan_motion_state = state.clone();
     server.fn_handler("/api/wifi/scan", Method::Post, move |request| {
+        if !authorized(request.header("X-Rover-Token")) {
+            request
+                .into_status_response(401)?
+                .write_all(b"unauthorized")?;
+            return Ok::<(), anyhow::Error>(());
+        }
         match scan_manager.submit_scan() {
             Ok(()) => {
                 scan_motion_state.lock().unwrap().apply_motion(Motion::Stop);
@@ -192,6 +260,12 @@ fn start_control_server(
 
     let switch_motion_state = state.clone();
     server.fn_handler("/api/network", Method::Post, move |mut request| {
+        if !authorized(request.header("X-Rover-Token")) {
+            request
+                .into_status_response(401)?
+                .write_all(b"unauthorized")?;
+            return Ok::<(), anyhow::Error>(());
+        }
         let length = request
             .header("Content-Length")
             .and_then(|value| value.parse::<usize>().ok());

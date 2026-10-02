@@ -8,6 +8,8 @@ Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi,
 
 - WPA2 access point: `cam-rover` (default password: `camrover`)
 - Scan nearby 2.4 GHz networks and verify a home Wi-Fi connection before saving credentials
+- Discover the rover as `cam-rover.local` on the home network with mDNS
+- Optional API token and a 700 ms controller lease between the hub and direct browser
 - Keep the robot AP at `http://192.168.71.1` while also serving the control page at the router-assigned IP when STA is connected
 - OV2640/OV3660 MJPEG video stream
 - Forward, backward, left/right rotation, four diagonal directions, and stop
@@ -190,7 +192,9 @@ curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"ap"}'
 ```
 
-`GET /api/network` returns active/preferred mode, both IPs, live phase, and fallback status, never the password. `{ "mode": "sta" }` retries saved credentials; invalid inputs return 400. HTTP control and video have no application authentication or encryption: use only a trusted local network, and do not port-forward ports 80/81. Change the default robot AP password before use outside a controlled setting.
+`GET /api/network` returns active/preferred mode, both IPs, live phase, and fallback status, never the password. `{ "mode": "sta" }` retries saved credentials; invalid inputs return 400. If `ROVER_API_TOKEN` is not set at build time, the legacy HTTP control API has no authentication. Do not port-forward ports 80/81, and change the default robot AP password.
+
+For hub control, compile with a `ROVER_API_TOKEN` of at least 16 characters. Mutating API requests then need an `X-Rover-Token` header. The hub uses `X-Rover-Controller: hub`; the direct browser uses `local`. A competing movement or speed request receives HTTP 409 while the other controller's 700 ms lease is live. `direction=stop` is always accepted without a token. The direct browser asks for the token after a 401 response and keeps it in session storage. The token is embedded in the firmware; rotate it by rebuilding and flashing. Traffic to the ESP32 is still plain HTTP, so keep it on a trusted local network.
 
 ## Build-time configuration
 

@@ -27,6 +27,9 @@ esp_idf_sdkconfig_defaults = ["sdkconfig.defaults"]
 remote_component = { name = "espressif/esp32-camera", version = "2.1.7" }
 
 [[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/mdns", version = "1.4.3" }
+
+[[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["components/rover_hardware"]
 bindings_header = "components/rover_hardware/include/rover_hardware.h"
 bindings_module = "rover"
