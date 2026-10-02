@@ -184,7 +184,7 @@
         <div class="card panel"><span class="tag green">사람이 수정</span><h3>소스와 설정</h3>
           <dl class="file-list">
             <dt><a href="../src/main.rs"><code>src/*.rs</code></a></dt><dd>Wi-Fi, 웹 서버, 안전 정지, 방향 계산 등 Rust 앱 로직.</dd>
-            <dt><a href="../src/network.rs"><code>src/network.rs</code></a></dt><dd>AP/STA 시작, 집 Wi-Fi 접속 정보 검증·NVS 저장, 접속 실패 시 AP 복구.</dd>
+            <dt><a href="../src/network.rs"><code>src/network.rs</code></a></dt><dd>AP+STA 유지, 주변 Wi-Fi 검색, 접속·IP 검증 후 NVS 저장, 실패 시 AP로 제어 유지.</dd>
             <dt><a href="../components/rover_hardware/rover_hardware.c"><code>components/*.c</code></a></dt><dd>카메라 초기화와 모터 PWM을 ESP-IDF API로 연결.</dd>
             <dt><a href="../components/rover_hardware/include/rover_hardware.h"><code>*.h</code></a></dt><dd>C 함수 선언. Rust 바인딩을 만드는 입력이기도 함.</dd>
             <dt><a href="../components/rover_hardware/CMakeLists.txt"><code>CMakeLists.txt</code></a></dt><dd>C 소스와 ESP-IDF 부품 의존성을 지정하는 빌드 설정 파일.</dd>
@@ -272,11 +272,11 @@ espflash save-image --chip esp32 --merge \
       <p class="diagram-intro">아래 그림은 현재 펌웨어 구현을 기준으로 합니다. 휴대폰에서는 그림 안쪽을 가로로 스크롤할 수 있습니다. 주황색은 각 그림에서 가장 중요한 상태나 경로만 강조합니다.</p>
 
       <figure class="diagram-figure">
-        <figcaption><strong>1. Wi-Fi AP ↔ 집 Wi-Fi(STA) 전환</strong>웹 화면이나 HTTP 명령이 선호 모드를 NVS에 기록하면 응답 후 재부팅합니다.</figcaption>
+        <figcaption><strong>1. Wi-Fi AP ↔ 집 Wi-Fi(STA) 전환</strong>로봇 AP를 유지하며 비동기로 집 Wi-Fi 연결을 검증하고, 성공한 설정만 저장합니다.</figcaption>
         <div class="diagram-scroll">
           <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="wifi-mode-title wifi-mode-desc">
             <title id="wifi-mode-title">Cam Rover Wi-Fi AP와 STA 상태 전환</title>
-            <desc id="wifi-mode-desc">AP에서 설정 명령을 받으면 재부팅해 집 Wi-Fi 연결을 시도한다. DHCP 연결에 성공하면 STA로 작동하고 실패하면 저장된 설정을 유지한 채 AP로 복구한다. STA에서도 AP 전환 명령으로 재부팅할 수 있다.</desc>
+            <desc id="wifi-mode-desc">로봇 AP는 계속 켜져 있다. HTTP 명령은 모터를 정지하고 접속 작업을 시작한다. 집 Wi-Fi 인증과 DHCP가 성공하면 STA 주소와 설정을 저장한다. 실패하면 기존 설정을 유지하고 AP로 제어한다.</desc>
             <defs>
               <marker id="wifi-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
               <marker id="wifi-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
@@ -291,27 +291,27 @@ espflash save-image --chip esp32 --merge \
             <path d="M544 440 H40 Q32 440 32 432 V264 Q32 256 40 256 H64" fill="none" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#wifi-arrow)"/>
             <path d="M848 216 V136 Q848 128 840 128 H392 Q384 128 384 136 V216" fill="none" stroke="#2e5aa8" stroke-width="1.2" marker-end="url(#wifi-arrow-link)"/>
             <rect x="232" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="264" y="246" text-anchor="middle" fill="#2e5aa8">POST STA</text>
-            <rect x="472" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="504" y="246" text-anchor="middle" fill="#4f5d75">BOOT STA</text>
+            <rect x="472" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="504" y="246" text-anchor="middle" fill="#4f5d75">ASYNC</text>
             <rect x="712" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="744" y="246" text-anchor="middle" fill="#4f5d75">DHCP OK</text>
             <rect x="632" y="340" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="668" y="350" text-anchor="middle" fill="#eb6c36">TIMEOUT</text>
-            <rect x="248" y="340" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="280" y="350" text-anchor="middle" fill="#4f5d75">BOOT AP</text>
-            <rect x="248" y="420" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="284" y="430" text-anchor="middle" fill="#4f5d75">FALLBACK</text>
+            <rect x="248" y="340" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="280" y="350" text-anchor="middle" fill="#4f5d75">POST AP</text>
+            <rect x="248" y="420" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="284" y="430" text-anchor="middle" fill="#4f5d75">AP READY</text>
             <rect x="592" y="108" width="72" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="628" y="118" text-anchor="middle" fill="#2e5aa8">POST AP</text>
             <rect x="64" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="72" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="96" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="144" y="263" text-anchor="middle">로봇 AP</text><text class="sub" x="144" y="280" text-anchor="middle">192.168.71.1</text>
-            <rect x="304" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="312" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="336" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="384" y="263" text-anchor="middle">재부팅</text><text class="sub" x="384" y="280" text-anchor="middle">NVS mode read</text>
-            <rect x="544" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="552" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="576" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="624" y="263" text-anchor="middle">집 Wi-Fi 접속 중</text><text class="sub" x="624" y="280" text-anchor="middle">2.4 GHz · WPA2</text>
-            <rect x="784" y="216" width="128" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="792" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="816" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="848" y="263" text-anchor="middle">STA 연결</text><text class="sub" x="848" y="280" text-anchor="middle">DHCP IP</text>
-            <rect x="544" y="400" width="160" height="80" rx="8" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="552" y="408" width="60" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="582" y="417" text-anchor="middle" fill="#eb6c36">RECOVER</text><text class="node-name" x="624" y="447" text-anchor="middle">AP 복구</text><text class="sub" x="624" y="464" text-anchor="middle">STA settings kept</text>
-            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">STATE = active Wi-Fi mode</text><text class="legend-text" x="376" y="544" fill="#eb6c36">ACCENT = recovery entry</text><text class="legend-text" x="704" y="544" fill="#2e5aa8">BLUE = HTTP request</text>
+            <rect x="304" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="312" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="336" y="233" text-anchor="middle" fill="#4f5d75">HTTP</text><text class="node-name" x="384" y="263" text-anchor="middle">명령 수락</text><text class="sub" x="384" y="280" text-anchor="middle">202 · 모터 정지</text>
+            <rect x="544" y="216" width="160" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="552" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="576" y="233" text-anchor="middle" fill="#4f5d75">TEST</text><text class="node-name" x="624" y="263" text-anchor="middle">집 Wi-Fi 검증</text><text class="sub" x="624" y="280" text-anchor="middle">인증 · DHCP</text>
+            <rect x="784" y="216" width="128" height="80" rx="8" fill="#fff" stroke="#2d3142"/><rect x="792" y="224" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="816" y="233" text-anchor="middle" fill="#4f5d75">STATE</text><text class="node-name" x="848" y="263" text-anchor="middle">AP + STA</text><text class="sub" x="848" y="280" text-anchor="middle">두 접속 주소</text>
+            <rect x="544" y="400" width="160" height="80" rx="8" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="552" y="408" width="60" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="582" y="417" text-anchor="middle" fill="#eb6c36">FALLBACK</text><text class="node-name" x="624" y="447" text-anchor="middle">AP 유지</text><text class="sub" x="624" y="464" text-anchor="middle">기존 설정 유지</text>
+            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">STATE = network status</text><text class="legend-text" x="376" y="544" fill="#eb6c36">ACCENT = failed validation</text><text class="legend-text" x="704" y="544" fill="#2e5aa8">BLUE = HTTP request</text>
           </svg>
         </div>
-        <p class="diagram-note">저장된 설정이 없으면 AP로 시작합니다. <code>POST /api/network</code>가 <code>mode</code>와 (STA 선택 시) SSID·암호를 NVS에 저장한 뒤 HTTP 202를 반환합니다. 이후 재시작해 STA 연결을 시도하며, 실패하면 AP로 복구합니다. 저장된 선호 모드가 STA이므로 다음 재부팅에도 다시 접속을 시도합니다.</p>
+        <p class="diagram-note">로봇 AP는 항상 먼저 켜집니다. <code>POST /api/wifi/scan</code>으로 주변 2.4GHz 네트워크를 검색할 수 있고, <code>POST /api/network</code>의 STA 명령은 비동기 접속 검증을 시작합니다. 인증과 DHCP가 성공해야 새 SSID·암호·선호 모드를 NVS에 저장합니다. 실패 시 새 정보는 저장하지 않고 <code>GET /api/network</code>에 오류를 표시하며 AP 주소로 계속 접근할 수 있습니다.</p>
       </figure>
 
       <figure class="diagram-figure">
         <figcaption><strong>1.1 AP → 집 Wi-Fi 전환 단계별 설명</strong>이전·다음 버튼으로 상태를 넘기거나 재생 버튼으로 전체 흐름을 볼 수 있습니다. 성공과 실패는 순서가 아니라 접속 시도의 두 가지 결과입니다.</figcaption>
-        <iframe class="diagram-embed" src="wifi-ap-sta-step.html" title="AP에서 집 Wi-Fi 접속 시도 후 성공 또는 AP 복구를 보여주는 단계별 도식" loading="lazy"></iframe>
-        <p class="diagram-note">JavaScript가 꺼져 있어도 도식 전체는 보입니다. 접속에 실패하면 실제 AP 모드로 복구되지만 NVS에 저장한 STA 선호 모드는 유지되어 다음 재부팅에서 다시 시도합니다. <a href="wifi-ap-sta-step.html">단계별 도식만 별도로 열기</a></p>
+        <iframe class="diagram-embed" src="wifi-ap-sta-step.html" title="AP를 유지하며 집 Wi-Fi 접속을 검증하고 결과를 보여주는 단계별 도식" loading="lazy"></iframe>
+        <p class="diagram-note">JavaScript가 꺼져 있어도 도식 전체는 보입니다. 검증 실패 시 새 후보 정보는 저장하지 않습니다. 이전에 저장한 집 Wi-Fi가 있다면 유지하고, 로봇 AP도 계속 사용할 수 있습니다. <a href="wifi-ap-sta-step.html">단계별 도식만 별도로 열기</a></p>
       </figure>
 
       <figure class="diagram-figure">
@@ -319,7 +319,7 @@ espflash save-image --chip esp32 --merge \
         <div class="diagram-scroll">
           <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="http-path-title http-path-desc">
             <title id="http-path-title">Cam Rover HTTP 제어 아키텍처</title>
-            <desc id="http-path-desc">휴대폰 웹 화면 또는 라즈베리 파이 서버가 ESP32 HTTP API에 요청한다. 이동 명령은 Rust 이동 판단과 안전 정지를 거쳐 모터로 전달되고, 네트워크 설정 명령은 NVS에 기록된 뒤 재부팅되어 AP 또는 STA를 시작한다.</desc>
+            <desc id="http-path-desc">휴대폰 웹 화면 또는 라즈베리 파이 서버가 ESP32 HTTP API에 요청한다. 이동 명령은 Rust 이동 판단과 안전 정지를 거쳐 모터로 전달되고, 네트워크 명령은 비동기 Wi-Fi 작업에서 접속과 IP를 검증한 뒤 성공 시에만 NVS에 저장된다. 로봇 AP는 유지된다.</desc>
             <defs>
               <marker id="http-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
               <marker id="http-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#2e5aa8"/></marker>
@@ -335,17 +335,17 @@ espflash save-image --chip esp32 --merge \
             <rect x="452" y="236" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="484" y="246" text-anchor="middle" fill="#eb6c36">MOVE</text>
             <rect x="696" y="164" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="728" y="174" text-anchor="middle" fill="#4f5d75">PWM</text>
             <rect x="416" y="364" width="80" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="456" y="374" text-anchor="middle" fill="#4f5d75">NETWORK</text>
-            <rect x="696" y="364" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="728" y="374" text-anchor="middle" fill="#4f5d75">REBOOT</text>
+            <rect x="696" y="364" width="64" height="12" rx="2" fill="#f5f5f5"/><text class="edge-text" x="728" y="374" text-anchor="middle" fill="#4f5d75">TEST</text>
             <rect x="56" y="240" width="160" height="64" rx="6" fill="rgba(79,93,117,.1)" stroke="#7a8399"/><rect x="64" y="248" width="48" height="12" rx="2" fill="none" stroke="#7a8399"/><text class="tag-text" x="88" y="257" text-anchor="middle" fill="#4f5d75">CLIENT</text><text class="node-name" x="136" y="275" text-anchor="middle">웹 · Go 서버</text><text class="sub" x="136" y="292" text-anchor="middle">same LAN</text>
             <rect x="288" y="240" width="160" height="64" rx="6" fill="rgba(235,108,54,.08)" stroke="#eb6c36"/><rect x="296" y="248" width="48" height="12" rx="2" fill="none" stroke="#eb6c36"/><text class="tag-text" x="320" y="257" text-anchor="middle" fill="#eb6c36">API</text><text class="node-name" x="368" y="275" text-anchor="middle">Rust HTTP 서버</text><text class="sub" x="368" y="292" text-anchor="middle">port 80</text>
             <rect x="528" y="152" width="160" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="536" y="160" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="560" y="169" text-anchor="middle" fill="#4f5d75">LOGIC</text><text class="node-name" x="608" y="187" text-anchor="middle">이동·안전 정지</text><text class="sub" x="608" y="204" text-anchor="middle">700 ms watchdog</text>
             <rect x="768" y="152" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="776" y="160" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="800" y="169" text-anchor="middle" fill="#4f5d75">OUTPUT</text><text class="node-name" x="840" y="187" text-anchor="middle">모터 제어</text><text class="sub" x="840" y="204" text-anchor="middle">C LEDC bridge</text>
-            <rect x="528" y="352" width="160" height="64" rx="6" fill="rgba(45,49,66,.05)" stroke="#4f5d75"/><rect x="536" y="360" width="48" height="12" rx="2" fill="none" stroke="#4f5d75"/><text class="tag-text" x="560" y="369" text-anchor="middle" fill="#4f5d75">STORE</text><text class="node-name" x="608" y="387" text-anchor="middle">NVS 설정</text><text class="sub" x="608" y="404" text-anchor="middle">mode · SSID · password</text>
-            <rect x="768" y="352" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="776" y="360" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="800" y="369" text-anchor="middle" fill="#4f5d75">RADIO</text><text class="node-name" x="840" y="387" text-anchor="middle">AP 또는 STA</text><text class="sub" x="840" y="404" text-anchor="middle">esp-idf-svc</text>
-            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">TOP = movement path</text><text class="legend-text" x="376" y="544" fill="#4f5d75">BOTTOM = persisted network mode</text><text class="legend-text" x="744" y="544" fill="#2e5aa8">BLUE = HTTP</text>
+            <rect x="528" y="352" width="160" height="64" rx="6" fill="rgba(45,49,66,.05)" stroke="#4f5d75"/><rect x="536" y="360" width="48" height="12" rx="2" fill="none" stroke="#4f5d75"/><text class="tag-text" x="560" y="369" text-anchor="middle" fill="#4f5d75">WORKER</text><text class="node-name" x="608" y="387" text-anchor="middle">Wi-Fi 작업</text><text class="sub" x="608" y="404" text-anchor="middle">scan · connect</text>
+            <rect x="768" y="352" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142"/><rect x="776" y="360" width="48" height="12" rx="2" fill="none" stroke="#bfc0c0"/><text class="tag-text" x="800" y="369" text-anchor="middle" fill="#4f5d75">RADIO</text><text class="node-name" x="840" y="387" text-anchor="middle">AP + STA</text><text class="sub" x="840" y="404" text-anchor="middle">DHCP → NVS</text>
+            <line x1="40" y1="520" x2="920" y2="520" stroke="#bfc0c0" stroke-width=".8"/><text class="legend-text" x="40" y="544" fill="#4f5d75">TOP = movement path</text><text class="legend-text" x="376" y="544" fill="#4f5d75">BOTTOM = Wi-Fi verification path</text><text class="legend-text" x="744" y="544" fill="#2e5aa8">BLUE = HTTP</text>
           </svg>
         </div>
-        <p class="diagram-note"><code>GET /api/move?direction=...</code>는 주행을 갱신하며 700ms 동안 새 이동 명령이 없으면 멈춥니다. <code>POST /api/network</code>는 모드와 접속 정보를 저장한 뒤 HTTP 202를 보내고 재부팅합니다. 영상은 별도 HTTP 서버의 <code>:81/stream</code>에서 제공합니다. API와 영상은 인증·암호화가 없으므로 신뢰할 수 있는 내부망에서만 사용하세요.</p>
+        <p class="diagram-note"><code>GET /api/move?direction=...</code>는 주행을 갱신하며 700ms 동안 새 이동 명령이 없으면 멈춥니다. <code>POST /api/network</code>는 HTTP 202를 보내고 별도 작업에서 접속을 시험합니다. 성공 시에만 집 Wi-Fi 설정을 NVS에 저장합니다. 영상은 별도 HTTP 서버의 <code>:81/stream</code>에서 제공합니다. API와 영상은 인증·암호화가 없으므로 신뢰할 수 있는 내부망에서만 사용하세요.</p>
       </figure>
 
       <figure class="diagram-figure">
@@ -387,11 +387,15 @@ espflash save-image --chip esp32 --merge \
         <pre><code>curl "http://ROVER_IP/api/move?direction=forward"
 curl "http://ROVER_IP/api/move?direction=stop"
 curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/wifi/scan"
+curl "http://ROVER_IP/api/wifi/scan"
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"ap"}'</code></pre>
-        <p>모드 변경 요청은 HTTP 202를 반환한 뒤 보드를 재부팅하므로 기존 IP 연결이 끊깁니다. <code>GET /api/network</code>는 현재 모드·IP·복구 여부를 반환하며 암호는 반환하지 않습니다. 집 Wi-Fi 접속 실패 시 <code>cam-rover</code>에 연결해 <code>http://192.168.71.1</code>에서 다시 설정할 수 있습니다.</p>
+        <p>HTTP 202는 검증 작업을 수락했다는 뜻이지 연결 성공을 의미하지 않습니다. <code>GET /api/network</code>의 <code>phase</code>·<code>last_error</code>·<code>saved_ssid</code>·<code>sta_ip</code>를 조회하세요. 집 Wi-Fi 접속 실패 시 새 후보는 저장하지 않으며 <code>cam-rover</code>의 <code>http://192.168.71.1</code>에서 다시 설정할 수 있습니다. AP는 계속 켜지지만 무선 칩이 채널을 바꿀 때 잠깐 끊길 수 있고, 휴대폰의 Wi-Fi를 자동 전환할 수는 없습니다.</p>
       </div>
     </section>
 
@@ -399,7 +403,7 @@ curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
       <details><summary><code>.cargo</code>와 <code>~/.cargo</code>는 같은 곳인가요?</summary><p>아니요. 프로젝트의 <code>.cargo/config.toml</code>은 이 펌웨어의 타깃 설정입니다. 사용자 홈의 <code>~/.cargo/bin</code>에는 Cargo와 espflash 같은 실행 도구가 설치됩니다.</p></details>
       <details><summary><code>cargo run</code>은 Mac에서 로봇 프로그램을 실행하나요?</summary><p>아니요. 이 프로젝트의 실행 대상은 <code>xtensa-esp32-espidf</code>이고, 설정된 runner는 <code>espflash flash --monitor</code>입니다. 따라서 실행 단계는 보드 업로드와 직렬 모니터로 이어집니다.</p></details>
       <details><summary>웹 조종 화면은 어디에 저장되나요?</summary><p><code>src/web/index.html</code>은 Rust의 <code>include_str!</code>로 펌웨어에 포함됩니다. 보드의 HTTP 서버가 이를 휴대폰 브라우저로 전송합니다.</p></details>
-      <details><summary>집 Wi-Fi 접속이 실패하면 조종할 수 없나요?</summary><p>연결 실패 시 로봇은 <code>cam-rover</code> AP를 다시 만듭니다. 휴대폰을 그 AP에 연결하고 <code>http://192.168.71.1</code>을 열어 SSID와 암호를 다시 설정하세요. 연결 정보는 NVS에 남아 있으며, 선호 모드가 STA라면 다음 재부팅 때도 접속을 다시 시도합니다.</p></details>
+      <details><summary>집 Wi-Fi 접속이 실패하면 조종할 수 없나요?</summary><p><code>cam-rover</code> AP는 접속 시험 중에도 유지됩니다. 휴대폰이 AP에 연결되어 있다면 <code>http://192.168.71.1</code>에서 실패 원인을 확인하고 다시 설정하세요. 실패한 새 정보는 저장하지 않으며, 이전에 저장한 설정은 유지됩니다. 부팅 시 저장된 STA 접속이 실패한 경우에도 AP에서 제어할 수 있습니다.</p></details>
       <details><summary>카메라 드라이버가 C이면 Rust 프로젝트가 아닌가요?</summary><p>프로그램의 제어 흐름은 Rust에 있습니다. 카메라와 모터의 저수준 하드웨어 호출만 ESP-IDF C API를 통해 연결합니다. Rust 코드가 C 함수를 호출하도록 <code>.h</code> 선언에서 바인딩이 생성됩니다.</p></details>
     </div></section>
   </main>
@@ -412,7 +416,7 @@ curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
         ['ESP-IDF가 하드웨어 부분을 빌드', 'esp-idf-sys가 .embuild/에 SDK와 컴파일 도구를 준비하고, esp32-camera와 rover_hardware C 코드를 함께 컴파일합니다.'],
         ['ESP32용 실행 파일 생성', 'Rust 코드와 C 라이브러리를 링크해 target/xtensa-esp32-espidf/release/cam-rover-esp32 ELF를 만듭니다. 이 파일은 Mac 프로그램이 아닙니다.'],
         ['USB로 기록', 'espflash flash가 ELF의 앱, 부트로더, 파티션 정보를 ESP32 플래시에 씁니다. .bin 통합 이미지는 필요할 때 별도로 만들 수 있습니다.'],
-        ['로봇에서 실행', 'ESP32를 재부팅하면 카메라, Wi-Fi AP 또는 STA, 웹 조종 화면과 모터 제어가 보드에서 실행됩니다. Mac을 계속 켜둘 필요가 없습니다.']
+        ['로봇에서 실행', 'ESP32를 재부팅하면 카메라, 로봇 AP와 선택적인 집 Wi-Fi STA, 웹 조종 화면과 모터 제어가 보드에서 실행됩니다. Mac을 계속 켜둘 필요가 없습니다.']
       ];
       const steps = [...document.querySelectorAll('.flow-step')];
       const detail = document.getElementById('flow-detail');

@@ -7,8 +7,8 @@ Keyestudio KS5024 ESP32-CAM 4WD 로봇용 Rust 펌웨어입니다. Wi-Fi, HTTP �
 ## 제공 기능
 
 - 로봇 자체 WPA2 Wi-Fi AP: `cam-rover` (기본 암호: `camrover`)
-- 웹 화면 또는 HTTP API로 로봇 AP와 2.4GHz 집 Wi-Fi 전환, 연결 실패 시 AP 복구
-- AP 모드에서는 `http://192.168.71.1`, STA 모드에서는 공유기가 할당한 IP로 모바일 제어 화면 접속
+- 주변 2.4GHz Wi-Fi 검색, 실제 접속·IP 할당 검증 성공 후에만 접속 정보 저장
+- 집 Wi-Fi에 연결되어도 로봇 AP(`http://192.168.71.1`) 유지; 공유기가 할당한 IP로도 접속 가능
 - OV2640/OV3660 MJPEG 영상 스트림
 - 전진, 후진, 좌우 제자리 회전, 네 방향 대각선 주행, 정지
 - 가청 소음을 줄인 20kHz 모터 PWM과 85~255 속도 조절, GPIO4 플래시 LED
@@ -79,7 +79,7 @@ Wi-Fi와 HTTP는 Rust가 `esp-idf-svc`를 통해 직접 사용합니다. 이 프
 | `components_esp32.lock` | 생성된 ESP-IDF 컴포넌트 버전. 이 저장소에서는 Git에서 제외 |
 | `rust-toolchain.toml`, `.cargo/config.toml` | ESP Xtensa 툴체인, 타깃, 링커, 업로드 실행 설정 |
 | `src/*.rs` | Rust 앱, 이동 로직, C 호출을 감싼 래퍼 |
-| `src/network.rs` | AP/STA 시작, NVS 설정, STA 접속 실패 시 AP 복구 |
+| `src/network.rs` | AP+STA 실행, Wi-Fi 검색·검증, NVS 설정, 연결 실패 시 AP 유지 |
 | `src/web/index.html` | `include_str!`로 펌웨어에 포함되는 조종 화면 |
 | `components/rover_hardware/include/rover_hardware.h` | Rust 바인딩 생성에 쓰는 C 함수 선언 |
 | `components/rover_hardware/rover_hardware.c` | SDK 헤더를 사용한 카메라·모터·LED 구현 |
@@ -141,7 +141,7 @@ espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-어댑터가 자동으로 다운로드 모드에 들어가지 못하면 BOOT를 누른 채 RESET을 한 번 누르고 업로드를 다시 시도하세요. 업로드가 끝나면 BOOT에서 손을 떼고 RESET을 누릅니다. STA 설정이 저장되지 않은 첫 부팅에서는 휴대폰을 `cam-rover` Wi-Fi에 기본 암호 `camrover`로 연결한 뒤 `http://192.168.71.1`을 엽니다. 일반적인 펌웨어 업로드는 NVS 설정을 유지하므로, 이미 설정한 보드는 집 Wi-Fi에 재접속할 수 있습니다.
+어댑터가 자동으로 다운로드 모드에 들어가지 못하면 BOOT를 누른 채 RESET을 한 번 누르고 업로드를 다시 시도하세요. 업로드가 끝나면 BOOT에서 손을 떼고 RESET을 누릅니다. 휴대폰을 `cam-rover` Wi-Fi에 기본 암호 `camrover`로 연결한 뒤 `http://192.168.71.1`을 엽니다. 일반적인 펌웨어 업로드는 NVS 설정을 유지하며, 이미 설정한 보드는 로봇 AP를 유지한 채 집 Wi-Fi 재접속을 백그라운드에서 시도합니다.
 
 빌드·업로드·직렬 로그 보기를 한 명령으로 실행하는 방법도 있습니다.
 
@@ -153,28 +153,24 @@ cargo run --release
 
 ## HTTP 제어와 네트워크 모드
 
-조종 화면의 버튼 또는 HTTP API로 집 Wi-Fi와 로봇 AP를 선택합니다. 집 Wi-Fi 이름과 암호는 펌웨어에 넣는 대신 ESP32의 NVS 플래시에 저장합니다. HTTP 응답을 먼저 보낸 뒤 모터를 정지하고 보드를 재시작합니다. 집 Wi-Fi는 2.4GHz WPA2-personal 방식이어야 하며 암호는 8~63바이트입니다. 로봇 IP는 공유기 DHCP 접속 기기 목록 또는 USB 직렬 로그에서 확인하세요. 라즈베리 파이 서버에서 주소를 고정해 사용하려면 공유기의 DHCP 주소 예약이 유용합니다. 부팅 중 연결에 실패하면 저장된 정보는 유지하고 `cam-rover` AP(`http://192.168.71.1`)로 복구합니다.
+로봇은 매 부팅 때 `http://192.168.71.1`의 WPA2 AP를 켭니다. 저장된 집 Wi-Fi를 선호하면 AP를 유지한 채 백그라운드에서 2.4GHz WPA2-personal 접속을 시도합니다. 성공하면 공유기가 할당한 IP도 사용할 수 있고, 실패하거나 실행 중 연결이 끊겨도 AP가 남습니다. 주변 Wi-Fi 검색은 SSID가 보이는지만 확인합니다. 실제 접속 검증은 인증과 DHCP IP 할당까지 확인하고, 성공한 새 접속 정보만 NVS에 저장합니다.
+
+`POST /api/network`는 HTTP 202를 반환하고 재부팅 없이 백그라운드에서 접속을 검증합니다. `GET /api/network`의 `phase`(`testing`, `connected`, `failed`, `idle`), `last_error`, `sta_configured`, `saved_ssid`, `sta_ip`, `ap_ip`를 조회하세요. `POST /api/wifi/scan`으로 검색을 시작하고 `GET /api/wifi/scan`으로 결과(최대 16개)를 조회합니다. 작업 중 다른 네트워크 명령은 HTTP 409를 반환합니다. 검색·전환 중에는 모터를 정지합니다. AP와 STA가 무선 칩을 공유하므로 채널이 바뀔 때 영상이나 AP 연결이 잠시 끊길 수 있습니다.
 
 ```mermaid
 flowchart TD
-    A["웹 화면 또는 HTTP 명령"] --> B{"선택한 모드"}
-    B -->|"집 Wi-Fi"| C["SSID·암호를 NVS에 저장<br/>선호 모드 = STA"]
-    B -->|"로봇 AP"| D["선호 모드 = AP로 저장"]
-    C --> E["HTTP 202 응답 → 모터 정지 → 재시작"]
-    D --> E
-    E --> F{"부팅 시 선호 모드"}
-    F -->|"AP"| G["cam-rover AP 시작<br/>192.168.71.1"]
-    F -->|"STA"| H{"저장된 접속 정보가 유효한가?"}
-    H -->|"아니요"| G
-    H -->|"예"| I["집 2.4GHz Wi-Fi 접속 시도"]
-    I -->|"연결·DHCP 성공"| J["공유기가 할당한 IP로 제어"]
-    I -->|"부팅 중 접속 실패"| K["STA 중지"]
-    K --> G
-    G --> L["GET /api/network<br/>부팅 시 실제 AP 모드·복구 여부"]
-    J --> M["GET /api/network<br/>부팅 시 실제 STA 모드·할당 IP"]
+    A["cam-rover AP 항상 유지"] --> B{"명령"}
+    B -->|"검색"| C["주변 SSID·신호 세기"]
+    C --> B
+    B -->|"집 Wi-Fi"| D["입력 또는 저장된 접속 정보"]
+    D --> E["STA 인증·DHCP 검증<br/>AP 유지"]
+    E -->|"성공"| F["NVS 저장·STA IP 제공<br/>AP IP 유지"]
+    E -->|"실패"| G["새 정보 저장 안 함<br/>AP 유지"]
+    F -->|"이후 연결 끊김"| G
+    B -->|"로봇 AP"| H["STA 연결 종료<br/>AP 유지"]
 ```
 
-AP로 복구되더라도 저장된 선호 모드는 STA이므로 다음 재부팅 때 같은 집 Wi-Fi 연결을 다시 시도합니다. `GET /api/network`의 모드·IP는 부팅 때 확정된 값이며 실행 중 Wi-Fi 연결 상태를 계속 감시한 결과는 아닙니다.
+새 접속 시도가 실패하면 이전에 저장된 정보는 유지합니다. 선호 모드가 STA라면 다음 부팅에 다시 시도합니다. 실행 중 STA 연결이 끊겨도 백그라운드 감시가 AP 대체 상태를 표시합니다. 웹페이지는 휴대폰의 Wi-Fi를 자동으로 바꿀 수 없으므로 로봇 AP에서 계속 조종하거나, 휴대폰을 직접 집 Wi-Fi로 전환한 뒤 표시된 STA 주소로 접속하세요. AP 채널 변경 때는 잠시 끊길 수 있습니다.
 
 라즈베리 파이도 같은 네트워크에 연결한 후 아래 명령을 보낼 수 있습니다. `ROVER_IP`를 실제 로봇 주소로 바꾸세요. 이동 명령은 700ms보다 짧은 주기로 반복하고, 버튼을 놓으면 `stop`을 보내세요.
 
@@ -184,13 +180,17 @@ curl "http://ROVER_IP/api/move?direction=stop"
 curl "http://ROVER_IP/api/speed?value=170"
 curl "http://ROVER_IP/api/light?on=1"
 curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/wifi/scan"
+curl "http://ROVER_IP/api/wifi/scan"
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta"}' # 저장된 정보로 재접속
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"ap"}'
 ```
 
-`GET /api/network`는 실제/선호 모드, SSID, IP, AP 복구 여부를 반환하지만 암호는 반환하지 않습니다. `POST /api/network`는 재시작 전 HTTP 202를 반환합니다. `{ "mode": "sta" }`는 저장된 접속 정보로 재시도하며 잘못된 입력은 400을 반환합니다. HTTP 제어와 영상에는 인증·암호화가 없으므로 신뢰할 수 있는 로컬 네트워크에서만 사용하고 80/81 포트를 외부에 개방하지 마세요.
+`GET /api/network`는 실제/선호 모드, AP·STA 주소, 진행 상태, 복구 여부를 반환하지만 암호는 반환하지 않습니다. `{ "mode": "sta" }`는 저장된 접속 정보로 재시도하며 잘못된 입력은 400을 반환합니다. HTTP 제어와 영상에는 애플리케이션 인증·암호화가 없으므로 신뢰할 수 있는 로컬 네트워크에서만 사용하고 80/81 포트를 외부에 개방하지 마세요. 통제되지 않은 환경에서는 기본 로봇 AP 암호를 변경하세요.
 
 ## 빌드 시점 설정
 

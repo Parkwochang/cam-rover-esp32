@@ -7,8 +7,8 @@ Rust firmware for the Keyestudio KS5024 ESP32-CAM 4WD robot. Rust handles Wi-Fi,
 ## Features
 
 - WPA2 access point: `cam-rover` (default password: `camrover`)
-- Switch between the robot AP and 2.4 GHz home Wi-Fi using the web page or HTTP API; connection failures fall back to the AP
-- Mobile control page at `http://192.168.71.1` in AP mode, or at the router-assigned IP in STA mode
+- Scan nearby 2.4 GHz networks and verify a home Wi-Fi connection before saving credentials
+- Keep the robot AP at `http://192.168.71.1` while also serving the control page at the router-assigned IP when STA is connected
 - OV2640/OV3660 MJPEG video stream
 - Forward, backward, left/right rotation, four diagonal directions, and stop
 - 20 kHz motor PWM with speed control from 85 to 255; GPIO4 flash LED
@@ -79,7 +79,7 @@ Rust uses `esp-idf-svc` directly for Wi-Fi and HTTP. Only the camera, motor PWM,
 | `components_esp32.lock` | Generated ESP-IDF component versions; excluded from Git in this repository |
 | `rust-toolchain.toml`, `.cargo/config.toml` | ESP Xtensa toolchain, target, linker, and flash runner |
 | `src/*.rs` | Rust application, motion logic, and safe wrappers around the C calls |
-| `src/network.rs` | AP/STA startup, NVS settings, and AP recovery when STA connection fails |
+| `src/network.rs` | AP+STA runtime, Wi-Fi scanning/testing, NVS settings, and AP fallback |
 | `src/web/index.html` | Control page embedded in the firmware with `include_str!` |
 | `components/rover_hardware/include/rover_hardware.h` | C declarations used to generate Rust bindings |
 | `components/rover_hardware/rover_hardware.c` | Camera, motor, and LED implementation using SDK headers |
@@ -141,7 +141,7 @@ espflash flash --port /dev/cu.usbserial-XXXX \
   target/xtensa-esp32-espidf/release/cam-rover-esp32
 ```
 
-If the adapter does not automatically enter download mode, hold BOOT and tap RESET, then retry the flash command. After flashing, release BOOT and tap RESET. On a first boot without saved STA settings, connect a phone to `cam-rover` using the default password `camrover`, then open `http://192.168.71.1`. Flashing normally preserves NVS, so a previously configured board may reconnect to home Wi-Fi instead.
+If the adapter does not automatically enter download mode, hold BOOT and tap RESET, then retry the flash command. After flashing, release BOOT and tap RESET. Connect a phone to `cam-rover` using the default password `camrover`, then open `http://192.168.71.1`. Flashing normally preserves NVS; a previously configured board also retries the saved home Wi-Fi in the background while its AP remains available.
 
 For a combined build, flash, and serial monitor, the repository's Cargo runner also supports:
 
@@ -153,28 +153,24 @@ Here `cargo run` runs the ELF on the **ESP32**, not on the Mac: `.cargo/config.t
 
 ## HTTP control and network mode
 
-The control page offers home Wi-Fi and robot AP buttons. Home Wi-Fi credentials are saved in the ESP32's NVS flash, not compiled into the firmware. The HTTP response is sent first; the motors then stop and the board reboots. Use a 2.4 GHz WPA2-personal network with an 8–63-byte password. Find the assigned IP in the router's DHCP list or USB serial log; a DHCP reservation is useful for a Raspberry Pi server. If connection fails during boot, the robot restores its `cam-rover` AP at `http://192.168.71.1` while keeping the saved credentials.
+The robot starts its WPA2 AP at `http://192.168.71.1` on every boot. If valid saved home Wi-Fi credentials are preferred, it tests that 2.4 GHz WPA2-personal connection in the background. The AP remains available in either case. A successful STA connection adds a router-assigned IP; a failed test or later link loss leaves the AP usable. The control page can scan nearby networks, but a scan only proves that an SSID is visible. The actual connection test checks association and DHCP before candidate credentials are saved.
+
+`POST /api/network` returns HTTP 202 and performs the test asynchronously, without rebooting. Poll `GET /api/network` for `phase` (`testing`, `connected`, `failed`, `idle`), `last_error`, `sta_configured`, `saved_ssid`, `sta_ip`, and `ap_ip`. `POST /api/wifi/scan` starts a scan; poll `GET /api/wifi/scan` for its result (up to 16 networks). An operation already in progress returns HTTP 409. Scanning or switching stops the motors. The AP and STA share one radio, so video or the AP link may pause briefly when the channel changes.
 
 ```mermaid
 flowchart TD
-    A["Web page or HTTP command"] --> B{"Selected mode"}
-    B -->|"Home Wi-Fi"| C["Save SSID and password in NVS<br/>Preferred mode = STA"]
-    B -->|"Robot AP"| D["Save preferred mode = AP"]
-    C --> E["HTTP 202 → stop motors → reboot"]
-    D --> E
-    E --> F{"Preferred mode at boot"}
-    F -->|"AP"| G["Start cam-rover AP<br/>192.168.71.1"]
-    F -->|"STA"| H{"Valid stored credentials?"}
-    H -->|"No"| G
-    H -->|"Yes"| I["Connect to home 2.4 GHz Wi-Fi"]
-    I -->|"Connected + DHCP"| J["Use router-assigned IP"]
-    I -->|"Boot-time connection failure"| K["Stop STA"]
-    K --> G
-    G --> L["GET /api/network<br/>Boot mode = AP; fallback if preferred STA"]
-    J --> M["GET /api/network<br/>Boot mode = STA; assigned IP"]
+    A["cam-rover AP stays on"] --> B{"Request"}
+    B -->|"Scan"| C["Nearby SSIDs and RSSI"]
+    C --> B
+    B -->|"Home Wi-Fi"| D["Input or saved credentials"]
+    D --> E["Test STA association + DHCP<br/>AP stays on"]
+    E -->|"Success"| F["Save NVS; expose STA IP<br/>keep AP IP"]
+    E -->|"Failure"| G["Do not save candidate<br/>keep AP available"]
+    F -->|"Later link loss"| G
+    B -->|"Robot AP"| H["Disconnect STA<br/>keep AP available"]
 ```
 
-When the board falls back to AP, its preferred mode remains STA; the next reboot retries the saved network. `GET /api/network` reports the mode/IP established at startup, not a continuous live Wi-Fi health check.
+After a failed attempt, the previous saved credentials remain. If the preferred mode is STA, the next reboot retries them. A background health check also marks a later STA link loss as AP fallback. A web page cannot change a phone's Wi-Fi network: the phone can keep controlling through the robot AP, or the user can join home Wi-Fi manually and open the displayed STA address. AP channel changes can still cause a short interruption.
 
 From a Raspberry Pi on the same network, substitute the robot's IP for `ROVER_IP`. Repeat movement commands more often than every 700 ms; the safety timer otherwise stops the motors. Send `stop` when releasing a control.
 
@@ -184,13 +180,17 @@ curl "http://ROVER_IP/api/move?direction=stop"
 curl "http://ROVER_IP/api/speed?value=170"
 curl "http://ROVER_IP/api/light?on=1"
 curl "http://ROVER_IP/api/network"
+curl -X POST "http://ROVER_IP/api/wifi/scan"
+curl "http://ROVER_IP/api/wifi/scan"
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"sta","ssid":"YOUR_2_4_GHZ_SSID","password":"YOUR_PASSWORD"}'
+curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
+  -d '{"mode":"sta"}' # retry saved credentials
 curl -X POST "http://ROVER_IP/api/network" -H 'Content-Type: application/json' \
   -d '{"mode":"ap"}'
 ```
 
-`GET /api/network` returns active/preferred mode, SSID, IP, and fallback status, never the password. `POST /api/network` returns HTTP 202 before reboot; `{ "mode": "sta" }` retries saved credentials. Invalid inputs return 400. HTTP control and video have no authentication or encryption: use only a trusted local network, and do not port-forward ports 80/81.
+`GET /api/network` returns active/preferred mode, both IPs, live phase, and fallback status, never the password. `{ "mode": "sta" }` retries saved credentials; invalid inputs return 400. HTTP control and video have no application authentication or encryption: use only a trusted local network, and do not port-forward ports 80/81. Change the default robot AP password before use outside a controlled setting.
 
 ## Build-time configuration
 
