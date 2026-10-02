@@ -2,7 +2,6 @@ mod control;
 mod hardware;
 mod network;
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -61,41 +60,28 @@ fn main() -> Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
-    let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs.clone()))?,
+    let wifi = BlockingWifi::wrap(
+        // Only NetworkStore persists credentials after a successful test.
+        EspWifi::new(peripherals.modem, sys_loop.clone(), None)?,
         sys_loop,
     )?;
-    let network_store = Arc::new(Mutex::new(network::NetworkStore::new(nvs)?));
-    let network_status = network::start(&mut wifi, &network_store.lock().unwrap())?;
-    let restart_requested = Arc::new(AtomicBool::new(false));
+    let network_manager = network::NetworkManager::new(wifi, nvs)?;
 
     let state = Arc::new(Mutex::new(RoverState::new()));
-    let control_server = start_control_server(
-        state.clone(),
-        network_store,
-        network_status,
-        restart_requested.clone(),
-    )?;
+    let control_server = start_control_server(state.clone(), network_manager.clone())?;
     let stream_server = start_stream_server()?;
     start_deadman_switch(state)?;
 
     // These services must stay alive for the entire firmware lifetime.
-    let _services = (wifi, control_server, stream_server);
+    let _services = (network_manager, control_server, stream_server);
     loop {
-        std::thread::sleep(Duration::from_millis(100));
-        if restart_requested.load(Ordering::Relaxed) {
-            hardware::stop();
-            std::thread::sleep(Duration::from_millis(700));
-            unsafe { esp_idf_svc::sys::esp_restart() };
-        }
+        std::thread::park();
     }
 }
 
 fn start_control_server(
     state: Arc<Mutex<RoverState>>,
-    network_store: Arc<Mutex<network::NetworkStore>>,
-    network_status: network::NetworkStatus,
-    restart_requested: Arc<AtomicBool>,
+    network_manager: network::NetworkManager,
 ) -> Result<EspHttpServer<'static>> {
     let mut server = EspHttpServer::new(&HttpConfiguration {
         http_port: 80,
@@ -165,13 +151,46 @@ fn start_control_server(
         Ok::<(), anyhow::Error>(())
     })?;
 
+    let status_manager = network_manager.clone();
     server.fn_handler("/api/network", Method::Get, move |request| {
         request
             .into_response(200, Some("OK"), &[("Content-Type", "application/json")])?
-            .write_all(network_status.json().to_string().as_bytes())?;
+            .write_all(status_manager.status_json().to_string().as_bytes())?;
         Ok::<(), anyhow::Error>(())
     })?;
 
+    let scan_manager = network_manager.clone();
+    server.fn_handler("/api/wifi/scan", Method::Get, move |request| {
+        request
+            .into_response(200, Some("OK"), &[("Content-Type", "application/json")])?
+            .write_all(scan_manager.scan_json().to_string().as_bytes())?;
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    let scan_manager = network_manager.clone();
+    let scan_motion_state = state.clone();
+    server.fn_handler("/api/wifi/scan", Method::Post, move |request| {
+        match scan_manager.submit_scan() {
+            Ok(()) => {
+                scan_motion_state.lock().unwrap().apply_motion(Motion::Stop);
+                request
+                    .into_response(
+                        202,
+                        Some("Accepted"),
+                        &[("Content-Type", "application/json")],
+                    )?
+                    .write_all(b"{\"scanning\":true}")?;
+            }
+            Err(error) => {
+                request
+                    .into_status_response(error.code)?
+                    .write_all(error.message.as_bytes())?;
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    })?;
+
+    let switch_motion_state = state.clone();
     server.fn_handler("/api/network", Method::Post, move |mut request| {
         let length = request
             .header("Content-Length")
@@ -194,23 +213,30 @@ fn start_control_server(
         let command = serde_json::from_slice(&body[..count]);
         let result = command
             .as_ref()
-            .map_err(|_| "invalid JSON")
-            .and_then(|command| network_store.lock().unwrap().apply_command(command));
+            .map_err(|_| network::SubmitError {
+                code: 400,
+                message: "invalid JSON",
+            })
+            .and_then(|command| network_manager.submit_network(command));
         match result {
-            Ok(()) => {
+            Ok(phase) => {
+                switch_motion_state
+                    .lock()
+                    .unwrap()
+                    .apply_motion(Motion::Stop);
+                let body = format!("{{\"accepted\":true,\"phase\":\"{phase}\"}}");
                 request
                     .into_response(
                         202,
                         Some("Accepted"),
                         &[("Content-Type", "application/json")],
                     )?
-                    .write_all(b"{\"switching\":true}")?;
-                restart_requested.store(true, Ordering::Relaxed);
+                    .write_all(body.as_bytes())?;
             }
-            Err(message) => {
+            Err(error) => {
                 request
-                    .into_status_response(400)?
-                    .write_all(message.as_bytes())?;
+                    .into_status_response(error.code)?
+                    .write_all(error.message.as_bytes())?;
             }
         }
         Ok::<(), anyhow::Error>(())

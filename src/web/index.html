@@ -25,10 +25,11 @@
     .network h2 { margin: 0 0 8px; font-size: 1.1rem; }
     .network p { color: #c2ccda; line-height: 1.5; }
     .network label { display: block; margin: 10px 0; }
-    .network input { display: block; width: 100%; margin-top: 5px; padding: 10px; background: #101319; border: 1px solid #66738a; border-radius: 8px; color: white; font-size: 1rem; }
-    .network .actions { display: flex; gap: 10px; }
+    .network input, .network select { display: block; width: 100%; margin-top: 5px; padding: 10px; background: #101319; border: 1px solid #66738a; border-radius: 8px; color: white; font-size: 1rem; }
+    .network .actions { display: flex; gap: 10px; flex-wrap: wrap; }
     .network button { min-height: 44px; padding: 0 14px; font-size: .95rem; }
     .network button:disabled { opacity: .5; }
+    .network a { color: #9ac2ff; }
   </style>
 </head>
 <body>
@@ -52,15 +53,18 @@
   </div>
   <small>버튼을 누르는 동안만 움직이며 손을 떼면 즉시 정지합니다. 키보드 방향키/WASD와 Q/E/Z/C 대각선 키도 지원합니다.</small>
   <section class="network">
-    <h2>네트워크 설정</h2>
+    <h2>네트워크 설정 · 로봇 AP / 집 Wi-Fi</h2>
     <p id="networkStatus">현재 연결 상태 확인 중…</p>
+    <p id="networkLinks"></p>
+    <div class="actions"><button id="scanWifi" type="button">주변 2.4 GHz Wi-Fi 검색</button></div>
+    <label>검색 결과<select id="wifiList"><option value="">직접 입력하거나 검색 결과를 선택하세요</option></select></label>
     <label>집 Wi-Fi 이름 (2.4 GHz)<input id="homeSsid" autocomplete="off" maxlength="32"></label>
     <label>집 Wi-Fi 암호<input id="homePassword" type="password" autocomplete="off" minlength="8" maxlength="63"></label>
     <div class="actions">
-      <button id="useHomeWifi">집 Wi-Fi 연결</button>
+      <button id="useHomeWifi">접속 검증 후 집 Wi-Fi 사용</button>
       <button id="useAp">로봇 AP 사용</button>
     </div>
-    <p id="networkMessage" role="status">전환하면 로봇이 재시작되어 현재 연결이 끊깁니다. 집 Wi-Fi IP는 공유기 DHCP 목록 또는 USB 직렬 로그에서 확인하세요.</p>
+    <p id="networkMessage" role="status">로봇 AP는 집 Wi-Fi 접속 후에도 유지됩니다. 휴대폰 Wi-Fi를 자동으로 바꿀 수는 없지만, AP에 연결한 채 검증 결과를 확인할 수 있습니다.</p>
   </section>
 </main>
 <script>
@@ -107,6 +111,7 @@
   const keys = {ArrowUp:'forward', w:'forward', ArrowDown:'backward', s:'backward', ArrowLeft:'left', a:'left', ArrowRight:'right', d:'right', q:'forward-left', e:'forward-right', z:'backward-left', c:'backward-right'};
   const pressed = new Set();
   addEventListener('keydown', (event) => {
+    if (event.target instanceof HTMLElement && event.target.closest('input, select, textarea, [contenteditable="true"]')) return;
     const direction = keys[event.key];
     if (direction && !pressed.has(event.key)) { event.preventDefault(); pressed.add(event.key); setMotion(direction); }
   });
@@ -116,38 +121,131 @@
   addEventListener('blur', () => setMotion('stop'));
 
   const networkStatus = document.getElementById('networkStatus');
+  const networkLinks = document.getElementById('networkLinks');
   const networkMessage = document.getElementById('networkMessage');
   const homeSsid = document.getElementById('homeSsid');
   const homePassword = document.getElementById('homePassword');
+  const wifiList = document.getElementById('wifiList');
+  const scanButton = document.getElementById('scanWifi');
   const networkButtons = [document.getElementById('useHomeWifi'), document.getElementById('useAp')];
   let savedHomeSsid = '';
   let hasSavedHomeWifi = false;
-  fetch('/api/network', {cache: 'no-store'}).then((response) => response.json()).then((status) => {
-    networkStatus.textContent = `현재: ${status.mode === 'sta' ? '집 Wi-Fi' : '로봇 AP'} (${status.ssid}, ${status.ip})` +
-      (status.fallback ? ' — 집 Wi-Fi 접속 실패, AP로 복구됨' : '');
-    hasSavedHomeWifi = status.sta_configured;
-    if (status.mode === 'sta') {
-      savedHomeSsid = status.ssid;
-      homeSsid.value = status.ssid;
+  let pendingNetwork = false;
+  let pendingMode = '';
+  let pendingScan = false;
+
+  function setNetworkButtonsDisabled(disabled) {
+    networkButtons.forEach((button) => button.disabled = disabled);
+    scanButton.disabled = disabled;
+  }
+
+  function setNetworkLinks(status) {
+    networkLinks.replaceChildren();
+    const addresses = [[`로봇 AP (${status.ap_ssid || 'cam-rover'})`, status.ap_ip || '192.168.71.1']];
+    if (status.sta_ip) addresses.push(['집 Wi-Fi', status.sta_ip]);
+    addresses.forEach(([label, ip], index) => {
+      if (index) networkLinks.append(' · ');
+      const link = document.createElement('a');
+      link.href = `http://${ip}/`;
+      link.textContent = `${label}: ${ip}`;
+      networkLinks.append(link);
+    });
+  }
+
+  async function refreshNetworkStatus() {
+    try {
+      const response = await fetch('/api/network', {cache: 'no-store'});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const status = await response.json();
+      const phase = status.phase || 'idle';
+      networkStatus.textContent = `현재: ${status.mode === 'sta' ? `집 Wi-Fi 연결됨 (${status.ssid})` : '로봇 AP'} · ${phase === 'testing' ? '접속 검증 중' : phase === 'switching' ? '전환 중' : phase === 'failed' ? '연결 실패' : '준비됨'}` +
+        (status.saved_ssid ? ` · 저장된 Wi-Fi: ${status.saved_ssid}` : ' · 저장된 집 Wi-Fi 없음') +
+        (status.fallback ? ' · 집 Wi-Fi 실패 후 AP 유지' : '');
+      setNetworkLinks(status);
+      hasSavedHomeWifi = !!status.sta_configured;
+      savedHomeSsid = status.saved_ssid || '';
+      if (savedHomeSsid && !homeSsid.value) homeSsid.value = savedHomeSsid;
+      if (pendingNetwork && phase !== 'testing' && phase !== 'switching') {
+        pendingNetwork = false;
+        setNetworkButtonsDisabled(false);
+        networkMessage.textContent = phase === 'failed'
+          ? `접속 검증 실패: ${status.last_error || '집 Wi-Fi에 연결하지 못했습니다.'} 로봇 AP는 계속 사용할 수 있습니다.`
+          : pendingMode === 'sta'
+            ? `집 Wi-Fi 연결 성공. 로봇 AP 주소는 그대로 사용할 수 있고, 집 Wi-Fi에서는 ${status.sta_ip} 주소로 접속하세요.`
+            : '집 Wi-Fi 연결을 종료했습니다. 로봇 AP로 계속 조종할 수 있습니다.';
+      } else if (!pendingNetwork && phase === 'failed' && status.last_error) {
+        networkMessage.textContent = `집 Wi-Fi 연결 실패: ${status.last_error} 로봇 AP는 유지됩니다.`;
+      }
+    } catch (_) {
+      networkStatus.textContent = '네트워크 상태를 읽지 못했습니다. 연결 중인 Wi-Fi를 확인하세요.';
+      if (pendingNetwork) networkMessage.textContent = '응답이 끊겼습니다. 로봇 AP(cam-rover)에 연결한 뒤 http://192.168.71.1 을 다시 열어 확인하세요.';
     }
-  }).catch(() => { networkStatus.textContent = '네트워크 상태를 읽지 못했습니다.'; });
+  }
+
+  async function refreshScanStatus() {
+    if (!pendingScan) return;
+    try {
+      const response = await fetch('/api/wifi/scan', {cache: 'no-store'});
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const status = await response.json();
+      if (status.phase === 'scanning') return;
+      pendingScan = false;
+      setNetworkButtonsDisabled(false);
+      if (status.phase === 'failed') {
+        networkMessage.textContent = `Wi-Fi 검색 실패: ${status.error || '다시 시도하세요.'}`;
+        return;
+      }
+      wifiList.replaceChildren(new Option('직접 입력하거나 검색 결과를 선택하세요', ''));
+      const seen = new Set();
+      (status.networks || []).forEach((network) => {
+        if (!network.ssid || seen.has(network.ssid)) return;
+        seen.add(network.ssid);
+        wifiList.add(new Option(`${network.ssid} · ${network.rssi} dBm · ${network.security}`, network.ssid));
+      });
+      networkMessage.textContent = seen.size
+        ? `${seen.size}개 Wi-Fi를 찾았습니다. SSID를 고르고 암호를 입력한 뒤 연결을 검증하세요.`
+        : '검색된 Wi-Fi가 없습니다. 숨김 SSID라면 직접 입력할 수 있습니다.';
+    } catch (error) {
+      pendingScan = false;
+      setNetworkButtonsDisabled(false);
+      networkMessage.textContent = `Wi-Fi 검색 결과를 읽지 못했습니다: ${error.message}`;
+    }
+  }
+
+  wifiList.addEventListener('change', () => { if (wifiList.value) homeSsid.value = wifiList.value; });
+  scanButton.addEventListener('click', async () => {
+    setMotion('stop');
+    setNetworkButtonsDisabled(true);
+    networkMessage.textContent = '주변 2.4 GHz Wi-Fi를 검색 중입니다. 영상이 잠시 끊길 수 있습니다.';
+    try {
+      const response = await fetch('/api/wifi/scan', {method: 'POST'});
+      if (!response.ok) throw new Error(await response.text());
+      pendingScan = true;
+      refreshScanStatus();
+    } catch (error) {
+      setNetworkButtonsDisabled(false);
+      networkMessage.textContent = `Wi-Fi 검색을 시작하지 못했습니다: ${error.message}`;
+    }
+  });
 
   async function switchNetwork(command) {
     setMotion('stop');
-    networkButtons.forEach((button) => button.disabled = true);
-    networkMessage.textContent = '설정을 저장하는 중…';
+    setNetworkButtonsDisabled(true);
+    networkMessage.textContent = command.mode === 'sta'
+      ? '암호와 IP 할당을 실제로 검증 중입니다. 성공한 경우에만 설정을 저장합니다.'
+      : '집 Wi-Fi 연결을 종료하고 로봇 AP를 유지합니다.';
     try {
       const response = await fetch('/api/network', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(command),
       });
       if (!response.ok) throw new Error(await response.text());
       homePassword.value = '';
-      networkMessage.textContent = command.mode === 'sta'
-        ? '로봇이 재시작됩니다. 이 기기를 집 Wi-Fi에 연결하고, 공유기 DHCP 목록 또는 USB 직렬 로그에서 로봇 IP를 확인하세요. 접속 실패 시 cam-rover AP로 복구됩니다.'
-        : '로봇이 재시작됩니다. cam-rover Wi-Fi에 연결한 뒤 http://192.168.71.1 을 여세요.';
+      pendingNetwork = true;
+      pendingMode = command.mode;
+      refreshNetworkStatus();
     } catch (error) {
       networkMessage.textContent = `설정 실패: ${error.message}`;
-      networkButtons.forEach((button) => button.disabled = false);
+      setNetworkButtonsDisabled(false);
     }
   }
   networkButtons[0].addEventListener('click', () => {
@@ -158,6 +256,9 @@
     else networkMessage.textContent = 'Wi-Fi 이름과 암호를 모두 입력하세요.';
   });
   networkButtons[1].addEventListener('click', () => switchNetwork({mode: 'ap'}));
+  refreshNetworkStatus();
+  setInterval(refreshNetworkStatus, 1500);
+  setInterval(refreshScanStatus, 900);
 </script>
 </body>
 </html>
