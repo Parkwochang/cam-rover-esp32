@@ -68,7 +68,27 @@
   </section>
 </main>
 <script>
-  const send = (path) => fetch(path, {cache: 'no-store'}).catch(() => {});
+  let apiToken = sessionStorage.getItem('rover-api-token') || '';
+  let tokenPrompt = null;
+  async function apiFetch(path, options = {}) {
+    const request = () => fetch(path, {
+      ...options,
+      cache: 'no-store',
+      headers: {...options.headers, 'X-Rover-Controller': 'local', ...(apiToken ? {'X-Rover-Token': apiToken} : {})},
+    });
+    let response = await request();
+    if (response.status === 401) {
+      if (!tokenPrompt) tokenPrompt = Promise.resolve(prompt('로버 제어 토큰을 입력하세요') || '');
+      const entered = await tokenPrompt;
+      tokenPrompt = null;
+      if (!entered) throw new Error('제어 토큰이 필요합니다.');
+      apiToken = entered;
+      sessionStorage.setItem('rover-api-token', entered);
+      response = await request();
+    }
+    return response;
+  }
+  const send = (path) => apiFetch(path).catch(() => {});
   const move = (direction) => send(`/api/move?direction=${direction}`);
   let activeMotion = 'stop';
   const setMotion = (direction) => { activeMotion = direction; move(direction); };
@@ -218,7 +238,7 @@
     setNetworkButtonsDisabled(true);
     networkMessage.textContent = '주변 2.4 GHz Wi-Fi를 검색 중입니다. 영상이 잠시 끊길 수 있습니다.';
     try {
-      const response = await fetch('/api/wifi/scan', {method: 'POST'});
+      const response = await apiFetch('/api/wifi/scan', {method: 'POST'});
       if (!response.ok) throw new Error(await response.text());
       pendingScan = true;
       refreshScanStatus();
@@ -235,7 +255,7 @@
       ? '암호와 IP 할당을 실제로 검증 중입니다. 성공한 경우에만 설정을 저장합니다.'
       : '집 Wi-Fi 연결을 종료하고 로봇 AP를 유지합니다.';
     try {
-      const response = await fetch('/api/network', {
+      const response = await apiFetch('/api/network', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(command),
       });
       if (!response.ok) throw new Error(await response.text());

@@ -1,3 +1,50 @@
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Controller {
+    Hub,
+    Local,
+}
+
+impl Controller {
+    pub fn parse(value: Option<&str>) -> Option<Self> {
+        match value {
+            Some("hub") => Some(Self::Hub),
+            None | Some("local") => Some(Self::Local),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ControlLease {
+    owner: Option<Controller>,
+    last_seen: Instant,
+}
+
+impl ControlLease {
+    pub fn new() -> Self {
+        Self {
+            owner: None,
+            last_seen: Instant::now(),
+        }
+    }
+
+    pub fn claim(&mut self, requester: Controller, timeout: Duration) -> bool {
+        if self.owner.is_some_and(|owner| owner != requester) && self.last_seen.elapsed() <= timeout
+        {
+            return false;
+        }
+        self.owner = Some(requester);
+        self.last_seen = Instant::now();
+        true
+    }
+
+    pub fn release(&mut self) {
+        self.owner = None;
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Motion {
     Stop,
@@ -78,5 +125,15 @@ mod tests {
             Some("220")
         );
         assert_eq!(parse_query("/api/move", "direction"), None);
+    }
+
+    #[test]
+    fn lease_rejects_competing_controller_until_released() {
+        let mut lease = ControlLease::new();
+        let timeout = Duration::from_millis(700);
+        assert!(lease.claim(Controller::Hub, timeout));
+        assert!(!lease.claim(Controller::Local, timeout));
+        lease.release();
+        assert!(lease.claim(Controller::Local, timeout));
     }
 }
