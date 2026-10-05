@@ -33,6 +33,7 @@
 
 static const char *TAG = "rover-hardware";
 static camera_fb_t *active_frame = NULL;
+static bool camera_ready = false;
 
 static uint32_t magnitude(int16_t value) {
     int32_t wide = value;
@@ -137,7 +138,12 @@ int32_t rover_hardware_init(bool vertical_flip) {
 
     ESP_RETURN_ON_ERROR(init_motor_pwm(), TAG, "motors");
     rover_motors_stop();
-    ESP_RETURN_ON_ERROR(init_camera(vertical_flip), TAG, "camera");
+    const esp_err_t camera_result = init_camera(vertical_flip);
+    camera_ready = camera_result == ESP_OK;
+    if (!camera_ready) {
+        // Camera faults must not prevent AP recovery or the independent motor stop.
+        ESP_LOGW(TAG, "camera unavailable (%s); recovery/control remain available", esp_err_to_name(camera_result));
+    }
     return ESP_OK;
 }
 
@@ -160,7 +166,7 @@ void rover_flash_set(bool on) {
 }
 
 int32_t rover_camera_capture(const uint8_t **data, size_t *length) {
-    if (data == NULL || length == NULL || active_frame != NULL) {
+    if (!camera_ready || data == NULL || length == NULL || active_frame != NULL) {
         return ESP_ERR_INVALID_STATE;
     }
 

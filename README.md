@@ -134,6 +134,21 @@ If no USB serial port appears, check the USB cable and adapter first. Some CH340
 
 ## Build, flash, and run
 
+### Connection safeguards
+
+Camera initialization failure leaves the recovery AP and motor control available,
+with motors stopped at boot. JPEG frames are validated and limited to 256 KiB;
+the synchronous camera stream is paced to about 15 fps and each session ends
+after 30 seconds. Viewers reconnect; for normal use, open the hub rather than
+opening both the direct robot video and hub video. This bounds a stale viewer's
+ownership, but does not add concurrent firmware streaming. Wi-Fi failures now
+distinguish association/authentication (15 seconds) from STA DHCP (10 seconds).
+NVS still stores candidate credentials only after successful connection.
+
+These are software bounds, not verification of battery/regulator stability.
+After flashing, check battery-only boot, AP recovery, home Wi-Fi, video reconnect
+and the independent 700 ms motor deadman with the wheels raised.
+
 Run these commands from the repository root. Keep the battery/motor power off while connecting the USB adapter, and test with the wheels raised. Replace the example port with the value returned by `espflash list-ports`.
 
 ```bash
