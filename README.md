@@ -145,6 +145,22 @@ ownership, but does not add concurrent firmware streaming. Wi-Fi failures now
 distinguish association/authentication (15 seconds) from STA DHCP (10 seconds).
 NVS still stores candidate credentials only after successful connection.
 
+Home STA loss now schedules saved-credential retries after 3, 6, 12, 24, 48,
+then at most 60 seconds between attempts (plus the bounded connection attempt).
+Explicit AP selection cancels retries; a manual network operation or scan takes
+precedence over a retry. The recovery AP remains available, although the shared
+radio may change channel during association. Disconnect events stop motors and
+release the controller lease; recovery never restores a previous motion.
+The independent 700 ms deadman is unchanged. Tiny move/speed responses disable
+TCP Nagle buffering; this reduces avoidable ACK latency, not RF packet loss.
+
+`GET /api/network` additionally reports `rssi`, `disconnect_reason` (ESP-IDF
+numeric reason), and `disconnect_count` since boot. Intentional STA disconnects
+also increment the count; interpret it together with network operations and
+serial logs. Passwords and the API token are never included. Use
+`bash scripts/check-host.sh` for the host-testable control, stream and retry
+policies, followed by `cargo fmt --check` and `cargo build --release` for ESP32.
+
 These are software bounds, not verification of battery/regulator stability.
 After flashing, check battery-only boot, AP recovery, home Wi-Fi, video reconnect
 and the independent 700 ms motor deadman with the wheels raised.
@@ -187,7 +203,7 @@ flowchart TD
     B -->|"Robot AP"| H["Disconnect STA<br/>keep AP available"]
 ```
 
-After a failed attempt, the previous saved credentials remain. If the preferred mode is STA, the next reboot retries them. A background health check also marks a later STA link loss as AP fallback. A web page cannot change a phone's Wi-Fi network: the phone can keep controlling through the robot AP, or the user can join home Wi-Fi manually and open the displayed STA address. AP channel changes can still cause a short interruption.
+After a failed attempt, the previous saved credentials remain. If the preferred mode is STA, background recovery retries them without a reboot. A background health check also marks a later STA link loss as AP fallback. A web page cannot change a phone's Wi-Fi network: the phone can keep controlling through the robot AP, or the user can join home Wi-Fi manually and open the displayed STA address. AP channel changes can still cause a short interruption.
 
 From a Raspberry Pi on the same network, substitute the robot's IP for `ROVER_IP`. Repeat movement commands more often than every 700 ms; the safety timer otherwise stops the motors. Send `stop` when releasing a control.
 

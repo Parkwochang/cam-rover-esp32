@@ -1,6 +1,7 @@
 mod control;
 mod hardware;
 mod network;
+mod retry;
 mod stream;
 
 use std::sync::{Arc, Mutex};
@@ -69,25 +70,39 @@ fn main() -> Result<()> {
     let peripherals = Peripherals::take()?;
     let sys_loop = EspSystemEventLoop::take()?;
     let nvs = EspDefaultNvsPartition::take()?;
+    let state = Arc::new(Mutex::new(RoverState::new()));
+    let wifi_events = sys_loop.clone();
     let wifi = BlockingWifi::wrap(
         // Only NetworkStore persists credentials after a successful test.
         EspWifi::new(peripherals.modem, sys_loop.clone(), None)?,
         sys_loop,
     )?;
-    let network_manager = network::NetworkManager::new(wifi, nvs)?;
+    let network_manager = network::NetworkManager::new(wifi, nvs, state.clone())?;
+    let wifi_status = network_manager.clone();
+    let wifi_subscription =
+        wifi_events.subscribe::<esp_idf_svc::wifi::WifiEvent, _>(move |event| {
+            if let esp_idf_svc::wifi::WifiEvent::StaDisconnected(disconnected) = event {
+                wifi_status.record_disconnect(disconnected.reason(), disconnected.rssi());
+            }
+        })?;
 
     let mut mdns = EspMdns::take()?;
     mdns.set_hostname("cam-rover")?;
     mdns.set_instance_name("Cam Rover")?;
     mdns.add_service(Some("Cam Rover control"), "_http", "_tcp", 80, &[])?;
 
-    let state = Arc::new(Mutex::new(RoverState::new()));
     let control_server = start_control_server(state.clone(), network_manager.clone())?;
     let stream_server = start_stream_server()?;
     start_deadman_switch(state)?;
 
     // These services must stay alive for the entire firmware lifetime.
-    let _services = (network_manager, mdns, control_server, stream_server);
+    let _services = (
+        network_manager,
+        wifi_subscription,
+        mdns,
+        control_server,
+        stream_server,
+    );
     loop {
         std::thread::park();
     }
@@ -118,7 +133,8 @@ fn start_control_server(
     })?;
 
     let motion_state = state.clone();
-    server.fn_handler("/api/move", Method::Get, move |request| {
+    server.fn_handler("/api/move", Method::Get, move |mut request| {
+        tune_control_socket(request.connection());
         let motion = parse_query(request.uri(), "direction").and_then(Motion::parse);
         match motion {
             Some(Motion::Stop) => {
@@ -160,7 +176,8 @@ fn start_control_server(
     })?;
 
     let speed_state = state.clone();
-    server.fn_handler("/api/speed", Method::Get, move |request| {
+    server.fn_handler("/api/speed", Method::Get, move |mut request| {
+        tune_control_socket(request.connection());
         let speed = parse_query(request.uri(), "value").and_then(|v| v.parse::<u8>().ok());
         match speed {
             Some(_) if !authorized(request.header("X-Rover-Token")) => {
@@ -319,6 +336,26 @@ fn start_control_server(
     })?;
 
     Ok(server)
+}
+
+fn tune_control_socket(connection: &esp_idf_svc::http::server::EspHttpConnection<'_>) {
+    use esp_idf_svc::handle::RawHandle;
+    use esp_idf_svc::sys::{httpd_req_to_sockfd, lwip_setsockopt, IPPROTO_TCP, TCP_NODELAY};
+    // ESP-IDF writes the tiny chunked ACK in multiple packets. Avoid Nagle
+    // waiting for a delayed ACK while the video connection occupies the radio.
+    let enabled: i32 = 1;
+    let result = unsafe {
+        lwip_setsockopt(
+            httpd_req_to_sockfd(connection.handle()),
+            IPPROTO_TCP as i32,
+            TCP_NODELAY as i32,
+            (&enabled as *const i32).cast(),
+            std::mem::size_of_val(&enabled) as _,
+        )
+    };
+    if result != 0 {
+        warn!("could not enable low-latency control socket");
+    }
 }
 
 fn start_stream_server() -> Result<EspHttpServer<'static>> {
