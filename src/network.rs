@@ -511,8 +511,22 @@ fn connect_station(
     if !wifi.is_started()? {
         wifi.start()?;
     }
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
+    wifi.wifi_mut()
+        .connect()
+        .context("starting Wi-Fi association")?;
+    wifi.wifi_wait_while(
+        || wifi.is_connected().map(|connected| !connected),
+        Some(Duration::from_secs(15)),
+    )
+    .context(
+        "Wi-Fi association/authentication timed out; check 2.4 GHz SSID and WPA2 credentials",
+    )?;
+    // In AP+STA mode the AP already has an IP. Wait for STA specifically.
+    wifi.ip_wait_while(
+        || wifi.wifi().sta_netif().is_up().map(|up| !up),
+        Some(Duration::from_secs(10)),
+    )
+    .context("Wi-Fi DHCP timed out; router did not assign an address")?;
     disable_power_save()?;
     Ok(wifi.wifi().sta_netif().get_ip_info()?.ip.to_string())
 }

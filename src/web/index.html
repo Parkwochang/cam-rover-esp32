@@ -93,7 +93,20 @@
   let activeMotion = 'stop';
   const setMotion = (direction) => { activeMotion = direction; move(direction); };
   setInterval(() => { if (activeMotion !== 'stop') move(activeMotion); }, 300);
-  document.getElementById('stream').src = `http://${location.hostname}:81/stream`;
+  const video = document.getElementById('stream');
+  let videoRetry;
+  const reconnectVideo = () => {
+    clearTimeout(videoRetry);
+    video.src = `http://${location.hostname}:81/stream?t=${Date.now()}`;
+  };
+  video.addEventListener('error', () => { videoRetry = setTimeout(reconnectVideo, 1500); });
+  // Firmware caps each stream session so a stale viewer cannot monopolize it.
+  setInterval(() => { if (!document.hidden) reconnectVideo(); }, 32000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(videoRetry); video.removeAttribute('src'); }
+    else reconnectVideo();
+  });
+  reconnectVideo();
 
   document.querySelectorAll('[data-move]').forEach((button) => {
     const direction = button.dataset.move;

@@ -1,6 +1,7 @@
 mod control;
 mod hardware;
 mod network;
+mod stream;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -101,6 +102,7 @@ fn start_control_server(
         ctrl_port: 32768,
         core: Some(Core::Core1),
         stack_size: 8192,
+        session_timeout: Duration::from_secs(5),
         ..Default::default()
     })?;
 
@@ -326,6 +328,7 @@ fn start_stream_server() -> Result<EspHttpServer<'static>> {
         core: Some(Core::Core1),
         stack_size: 8192,
         max_open_sockets: 2,
+        session_timeout: Duration::from_secs(5),
         ..Default::default()
     })?;
 
@@ -341,7 +344,10 @@ fn start_stream_server() -> Result<EspHttpServer<'static>> {
             ],
         )?;
 
-        loop {
+        // A slow/stale client must not own the single camera handler forever.
+        // Socket writes also have ESP-IDF's five-second send timeout.
+        let started = Instant::now();
+        while started.elapsed() < stream::SESSION_LIMIT {
             let frame = match hardware::Frame::capture() {
                 Ok(frame) => frame,
                 Err(err) => {
@@ -349,6 +355,10 @@ fn start_stream_server() -> Result<EspHttpServer<'static>> {
                     break;
                 }
             };
+            if !stream::valid_jpeg(frame.bytes()) {
+                warn!("discarding invalid or oversized camera frame");
+                break;
+            }
             let header = format!(
                 "\r\n--{STREAM_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {}\r\n\r\n",
                 frame.bytes().len()
@@ -358,6 +368,8 @@ fn start_stream_server() -> Result<EspHttpServer<'static>> {
             {
                 break;
             }
+            drop(frame);
+            std::thread::sleep(stream::FRAME_INTERVAL);
         }
 
         Ok::<(), anyhow::Error>(())
