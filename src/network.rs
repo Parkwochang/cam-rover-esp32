@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use embedded_svc::wifi::{
@@ -11,6 +11,8 @@ use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition};
 use esp_idf_svc::wifi::{BlockingWifi, EspWifi};
 use log::{info, warn};
 use serde_json::{json, Value};
+
+use crate::{control::Motion, retry::Retry, RoverState};
 
 const AP_SSID: &str = match option_env!("ROVER_WIFI_SSID") {
     Some(value) => value,
@@ -32,6 +34,9 @@ struct NetworkStatus {
     saved_ssid: Option<String>,
     phase: &'static str,
     last_error: Option<String>,
+    rssi: Option<i8>,
+    disconnect_reason: Option<u16>,
+    disconnect_count: u32,
 }
 
 impl NetworkStatus {
@@ -46,6 +51,9 @@ impl NetworkStatus {
             saved_ssid,
             phase: "idle",
             last_error: None,
+            rssi: None,
+            disconnect_reason: None,
+            disconnect_count: 0,
         }
     }
 
@@ -75,6 +83,9 @@ impl NetworkStatus {
             "fallback": self.phase != "testing" && self.phase != "switching" && self.mode != self.preferred_mode,
             "phase": self.phase,
             "last_error": self.last_error,
+            "rssi": self.rssi,
+            "disconnect_reason": self.disconnect_reason,
+            "disconnect_count": self.disconnect_count,
         })
     }
 }
@@ -180,12 +191,14 @@ pub struct NetworkManager {
     status: Arc<Mutex<NetworkStatus>>,
     scan: Arc<Mutex<ScanStatus>>,
     busy: Arc<AtomicBool>,
+    motion: Arc<Mutex<RoverState>>,
 }
 
 impl NetworkManager {
     pub fn new(
         mut wifi: BlockingWifi<EspWifi<'static>>,
         nvs: EspDefaultNvsPartition,
+        motion: Arc<Mutex<RoverState>>,
     ) -> Result<Self> {
         anyhow::ensure!(
             (8..=63).contains(&AP_PASSWORD.len()),
@@ -230,11 +243,12 @@ impl NetworkManager {
             status: status.clone(),
             scan: scan.clone(),
             busy: busy.clone(),
+            motion: motion.clone(),
         };
         std::thread::Builder::new()
             .name("rover-network".into())
             .stack_size(8192)
-            .spawn(move || worker(wifi, store, status, scan, busy, receiver))?;
+            .spawn(move || worker(wifi, store, status, scan, busy, receiver, motion))?;
 
         if let Some((ssid, password)) = credentials.filter(|_| prefer_sta) {
             manager.busy.store(true, Ordering::Release);
@@ -253,6 +267,17 @@ impl NetworkManager {
 
     pub fn status_json(&self) -> Value {
         self.status.lock().unwrap().json()
+    }
+
+    pub fn record_disconnect(&self, reason: u16, rssi: i8) {
+        // The event callback never reconnects or waits for the network worker.
+        // Stop is independent of the Pi and must precede any recovery attempt.
+        stop_motion(&self.motion);
+        let mut status = self.status.lock().unwrap();
+        status.disconnect_reason = Some(reason);
+        status.disconnect_count = status.disconnect_count.saturating_add(1);
+        status.rssi = Some(rssi);
+        warn!("STA disconnected: reason={reason}, RSSI={rssi} dBm");
     }
 
     pub fn scan_json(&self) -> Value {
@@ -341,8 +366,10 @@ fn worker(
     scan: Arc<Mutex<ScanStatus>>,
     busy: Arc<AtomicBool>,
     receiver: Receiver<Job>,
+    motion: Arc<Mutex<RoverState>>,
 ) {
     let mut missed_link_checks = 0u8;
+    let mut retry = Retry::new();
     loop {
         let job = match receiver.recv_timeout(Duration::from_secs(3)) {
             Ok(job) => job,
@@ -353,6 +380,9 @@ fn worker(
                         && wifi.wifi().sta_netif().is_up().unwrap_or(false);
                     if connected {
                         missed_link_checks = 0;
+                        if let Ok(ap) = wifi.wifi().get_ap_info() {
+                            status.lock().unwrap().rssi = Some(ap.signal_strength);
+                        }
                     } else {
                         missed_link_checks = missed_link_checks.saturating_add(1);
                         if missed_link_checks >= 2 {
@@ -361,15 +391,64 @@ fn worker(
                                 NetworkStatus::ap(current.ap_ip, "sta", current.saved_ssid);
                             fallback.phase = "failed";
                             fallback.last_error = Some("Home Wi-Fi connection was lost".into());
+                            fallback.disconnect_reason = current.disconnect_reason;
+                            fallback.disconnect_count = current.disconnect_count;
+                            fallback.rssi = current.rssi;
                             *status.lock().unwrap() = fallback;
+                            stop_motion(&motion);
                             if let Err(error) = idle_station(&mut wifi) {
                                 warn!("Could not reset station after link loss: {error:#}");
                             }
                             missed_link_checks = 0;
+                            retry.failed(Instant::now());
                         }
                     }
                 } else {
                     missed_link_checks = 0;
+                    if current.preferred_mode == "sta" && retry.ready(Instant::now()) {
+                        // Manual requests reserve busy first; never compete with
+                        // an explicit AP selection or a Wi-Fi scan.
+                        if busy
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                            .is_ok()
+                        {
+                            stop_motion(&motion);
+                            let credentials = {
+                                let store = store.lock().unwrap();
+                                if store.prefers_sta().unwrap_or(false) {
+                                    store.credentials().ok().flatten()
+                                } else {
+                                    None
+                                }
+                            };
+                            if let Some((ssid, password)) = credentials {
+                                status.lock().unwrap().phase = "testing";
+                                match connect_station(&mut wifi, &ssid, &password) {
+                                    Ok(ip) => {
+                                        let mut status = status.lock().unwrap();
+                                        status.connected(ssid, ip);
+                                        if let Ok(ap) = wifi.wifi().get_ap_info() {
+                                            status.rssi = Some(ap.signal_strength);
+                                        }
+                                        retry.reset();
+                                        info!("Home Wi-Fi recovered; motors remain stopped");
+                                    }
+                                    Err(error) => {
+                                        warn!("Home Wi-Fi retry failed: {error:#}");
+                                        let _ = idle_station(&mut wifi);
+                                        let mut status = status.lock().unwrap();
+                                        status.phase = "failed";
+                                        status.last_error =
+                                            Some(format!("Wi-Fi recovery failed: {error}"));
+                                        retry.failed(Instant::now());
+                                    }
+                                }
+                            } else {
+                                retry.reset();
+                            }
+                            busy.store(false, Ordering::Release);
+                        }
+                    }
                 }
                 continue;
             }
@@ -394,6 +473,7 @@ fn worker(
                 }
             }
             Job::AccessPoint => {
+                retry.reset();
                 let before = status.lock().unwrap().clone();
                 let result = store
                     .lock()
@@ -422,6 +502,7 @@ fn worker(
                 password,
                 save,
             } => {
+                stop_motion(&motion);
                 let before = status.lock().unwrap().clone();
                 let old_credentials = store.lock().unwrap().credentials().ok().flatten();
                 {
@@ -445,7 +526,14 @@ fn worker(
                         );
                         let mut current = before;
                         current.connected(ssid, ip);
-                        *status.lock().unwrap() = current;
+                        let mut shared = status.lock().unwrap();
+                        current.disconnect_reason = shared.disconnect_reason;
+                        current.disconnect_count = shared.disconnect_count;
+                        if let Ok(ap) = wifi.wifi().get_ap_info() {
+                            current.rssi = Some(ap.signal_strength);
+                        }
+                        *shared = current;
+                        retry.reset();
                     }
                     Err(error) => {
                         warn!("STA connection failed ({error:#}); keeping rover AP");
@@ -453,13 +541,26 @@ fn worker(
                             recover_with_credentials(&mut wifi, before, old_credentials);
                         restored.phase = "failed";
                         restored.last_error = Some(format!("Wi-Fi connection failed: {error}"));
-                        *status.lock().unwrap() = restored;
+                        let mut shared = status.lock().unwrap();
+                        restored.disconnect_reason = shared.disconnect_reason;
+                        restored.disconnect_count = shared.disconnect_count;
+                        restored.rssi = shared.rssi;
+                        if restored.preferred_mode == "sta" {
+                            retry.failed(Instant::now());
+                        }
+                        *shared = restored;
                     }
                 }
             }
         }
         busy.store(false, Ordering::Release);
     }
+}
+
+fn stop_motion(motion: &Arc<Mutex<RoverState>>) {
+    let mut state = motion.lock().unwrap();
+    state.apply_motion(Motion::Stop);
+    state.lease.release();
 }
 
 fn recover(
